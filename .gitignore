@@ -1,0 +1,10 @@
+.DS_Store
+.env
+dist
+srv/app
+srv/coverage.out
+web/.env.local
+web/dist
+web/node_modules
+web/coverage
+.playwright-cli
