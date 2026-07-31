@@ -18,8 +18,7 @@ const (
 )
 
 type authHandler struct {
-	auth         *service.AuthService
-	cookieSecure bool
+	auth *service.AuthService
 }
 
 type loginRequest struct {
@@ -102,7 +101,7 @@ func (handler *authHandler) setSessionCookie(
 		maxAge,
 		"/",
 		"",
-		handler.cookieSecure,
+		false,
 		true,
 	)
 }

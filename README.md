@@ -13,8 +13,7 @@
 - 登录只有一个来自环境变量的管理员；会话和运行状态都只保存在 Go 内存中。
 - 给客户端的配置按需生成并下载，不会落成额外的服务端数据文件。
 
-默认配置目录是 WireGuard 标准目录 `/etc/wireguard`。`WG_CONFIG_DIR` 只用于本地
-开发或特殊部署时覆盖目录，必须是绝对路径。
+配置目录固定为 WireGuard 标准目录 `/etc/wireguard`，不提供旁路目录配置。
 
 ## 配置文件中的面板元数据
 
@@ -140,47 +139,31 @@ PersistentKeepalive、稳定 Peer ID 和系统生成的 Peer 私钥。
 
 ## 身份与环境变量
 
-默认账号密码为 `admin/admin`：
+默认账号密码为 `admin/admin5555`：
 
 ```bash
 APP_PORT=8080
 APP_USERNAME=admin
-APP_PASSWORD=admin
-WG_CONFIG_DIR=/etc/wireguard
-APP_COOKIE_SECURE=false
+APP_PASSWORD=admin5555
 ```
 
-账号、密码和会话都不写入磁盘。生产环境必须覆盖默认密码，并在 HTTPS 部署时设置
-`APP_COOKIE_SECURE=true`。服务重启后，内存会话会自然失效。
+账号和密码来自进程环境，会话只保存在内存中。生产环境必须覆盖默认密码。服务重启后，
+内存会话会自然失效。当前面板按 HTTP 部署，Cookie 使用 HttpOnly 与 SameSite 保护，
+但不会设置 Secure 属性。
 
-## Docker
+## 原生运行
 
-只管理配置文件时：
+项目发布为单个静态链接的 Linux AMD64 可执行文件，前端资源已经通过 Go `embed`
+包含在二进制中，不需要额外的 Web 服务器或运行时。程序直接运行在 WireGuard 主机上：
 
-```bash
-docker build -t wireguard-panel .
-docker run --rm \
-  -p 8080:8080 \
-  -v /etc/wireguard:/etc/wireguard \
-  -e APP_PASSWORD='replace-with-a-strong-password' \
-  wireguard-panel
-```
+- 固定读取和写入 `/etc/wireguard`；
+- 通过主机上的 `wg` 命令读取运行状态；
+- 默认监听 `0.0.0.0:8080` 并提供 HTTP 页面和 API；
+- 需要拥有读写 WireGuard 配置及读取运行状态的权限，安装服务默认以 root 运行；
+- 不负责执行 `wg-quick up/down`，配置修改后由管理员按实际网络变更流程应用。
 
-如需在 Linux 主机上读取宿主机运行中的 WireGuard 状态，容器还要与接口处于同一
-网络命名空间，并有读取 WireGuard netlink 信息的权限：
-
-```bash
-docker run --rm \
-  --network host \
-  --cap-add NET_ADMIN \
-  -v /etc/wireguard:/etc/wireguard \
-  -e APP_PASSWORD='replace-with-a-strong-password' \
-  wireguard-panel
-```
-
-镜像包含 `wireguard-tools`。默认以 root 运行，是为了访问宿主机通常由 root 持有且
-权限为 `0700/0600` 的 WireGuard 目录；若目录权限已按其他 UID 调整，可在部署平台
-指定对应用户。
+当前正式安装方式是 Alpine Linux AMD64 + OpenRC。安装器只写入程序文件、OpenRC
+服务定义和管理员环境变量，不创建数据库或面板业务配置文件。
 
 ## Alpine 一键安装
 
@@ -203,15 +186,15 @@ curl -fsSL \
 - 注册并启动 `wireguard-panel` OpenRC 服务；
 - 保留升级前已经存在的环境配置。
 
-首次安装可以直接设置管理员密码：
+安装命令无需携带密码。首次登录后，请编辑
+`/etc/conf.d/wireguard-panel` 修改 `APP_PASSWORD` 并重启服务：
 
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/pch18/wireguard-panel/main/install-alpine.sh \
-  | APP_PASSWORD='replace-with-a-strong-password' sh
+vi /etc/conf.d/wireguard-panel
+rc-service wireguard-panel restart
 ```
 
-默认仍为 `admin/admin`，生产环境务必修改
+初始账号密码为 `admin/admin5555`，生产环境务必修改
 `/etc/conf.d/wireguard-panel` 中的 `APP_PASSWORD`。目前 Release 安装器只支持
 Linux AMD64 Alpine。
 
@@ -246,17 +229,18 @@ curl -fsSL \
 │   │   └── wgstatus/           # wg dump 内存采集
 │   ├── web/                    # 前端构建产物
 │   └── main.go
-└── Dockerfile
+├── install-alpine.sh           # Alpine/OpenRC 一键安装
+└── scripts/build-release.sh    # 原生 AMD64 Release 构建
 ```
 
 ## 本地开发
 
-需要 Go 1.23+、Node.js 22+、pnpm 10；状态采集还需要 `wg` 命令。开发时建议使用
-临时目录：
+需要 Go 1.23+、Node.js 22+、pnpm 10；状态采集还需要 `wg` 命令。后端固定读取
+`/etc/wireguard`，启动前请确保该目录存在且当前用户有权访问：
 
 ```bash
 cd srv
-WG_CONFIG_DIR=/tmp/wireguard-panel go run .
+go run .
 ```
 
 另一个终端：

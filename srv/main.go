@@ -20,6 +20,8 @@ import (
 //go:embed web
 var webFiles embed.FS
 
+const wireGuardDirectory = "/etc/wireguard"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -30,7 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	configStore, err := wgconfig.NewStore(cfg.WireGuardDirectory)
+	configStore, err := wgconfig.NewStore(wireGuardDirectory)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,11 +49,10 @@ func main() {
 	)
 	statusCollector.Start(shutdownSignal)
 	router, err := httpapi.NewRouter(httpapi.Dependencies{
-		Auth:         authService,
-		Configs:      configStore,
-		Status:       statusCollector,
-		WebFiles:     webFiles,
-		CookieSecure: cfg.CookieSecure,
+		Auth:     authService,
+		Configs:  configStore,
+		Status:   statusCollector,
+		WebFiles: webFiles,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +67,7 @@ func main() {
 	serverErrors := make(chan error, 1)
 
 	log.Printf("server listening on http://localhost:%s", cfg.Port)
-	log.Printf("WireGuard configurations at %s", cfg.WireGuardDirectory)
+	log.Printf("WireGuard configurations at %s", wireGuardDirectory)
 	go func() {
 		serverErrors <- server.ListenAndServe()
 	}()

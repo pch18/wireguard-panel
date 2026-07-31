@@ -137,9 +137,7 @@ if [ ! -e "$configuration" ]; then
   {
     write_export APP_PORT "${APP_PORT:-8080}"
     write_export APP_USERNAME "${APP_USERNAME:-admin}"
-    write_export APP_PASSWORD "${APP_PASSWORD:-admin}"
-    write_export APP_COOKIE_SECURE "${APP_COOKIE_SECURE:-false}"
-    write_export WG_CONFIG_DIR "${WG_CONFIG_DIR:-/etc/wireguard}"
+    write_export APP_PASSWORD "${APP_PASSWORD:-admin5555}"
     write_export GIN_MODE "release"
   } >"$configuration"
   chmod 0600 "$configuration"
@@ -191,6 +189,6 @@ say "WireGuard Panel installed successfully."
 say "Configuration: ${configuration}"
 say "WireGuard files: $(root_path /etc/wireguard)"
 say "Web address: http://SERVER_IP:${APP_PORT:-8080}"
-if [ "$created_configuration" = "1" ] && [ "${APP_PASSWORD:-admin}" = "admin" ]; then
-  say "WARNING: default login is admin/admin. Change APP_PASSWORD in ${configuration}."
+if [ "$created_configuration" = "1" ] && [ "${APP_PASSWORD:-admin5555}" = "admin5555" ]; then
+  say "WARNING: default login is admin/admin5555. Change APP_PASSWORD in ${configuration}."
 fi

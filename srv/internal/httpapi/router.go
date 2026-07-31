@@ -16,11 +16,10 @@ import (
 )
 
 type Dependencies struct {
-	Auth         *service.AuthService
-	Configs      *wgconfig.Store
-	Status       *wgstatus.Collector
-	WebFiles     fs.FS
-	CookieSecure bool
+	Auth     *service.AuthService
+	Configs  *wgconfig.Store
+	Status   *wgstatus.Collector
+	WebFiles fs.FS
 }
 
 func NewRouter(deps Dependencies) (*gin.Engine, error) {
@@ -38,10 +37,7 @@ func NewRouter(deps Dependencies) (*gin.Engine, error) {
 		return nil, fmt.Errorf("open embedded web files: %w", err)
 	}
 
-	auth := &authHandler{
-		auth:         deps.Auth,
-		cookieSecure: deps.CookieSecure,
-	}
+	auth := &authHandler{auth: deps.Auth}
 	wireGuard := &wireGuardHandler{configs: deps.Configs, status: deps.Status}
 	router := gin.New()
 	if err := router.SetTrustedProxies(nil); err != nil {
