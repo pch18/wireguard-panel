@@ -499,6 +499,13 @@ export default function InterfaceEditorPage() {
     runtimeMetricsAvailable,
     windowedRates,
   ]);
+  const onlinePeerCount = interfaceRuntimeSummary.available
+    ? interfaceRuntimeSummary.activePeers
+    : undefined;
+  const offlinePeerCount =
+    onlinePeerCount === undefined
+      ? undefined
+      : Math.max(0, interfaceRuntimeSummary.totalPeers - onlinePeerCount);
 
   useEffect(() => {
     peerTrafficHistoryRef.current.clear();
@@ -1305,7 +1312,7 @@ export default function InterfaceEditorPage() {
         </dl>
         <dl
           className="interface-runtime-summary"
-          aria-label="Interface 流量与端点状态"
+          aria-label="Interface 流量状态"
         >
           <div>
             <dt>累计接收</dt>
@@ -1316,7 +1323,7 @@ export default function InterfaceEditorPage() {
                   : "暂不可用"}
               </strong>
               <small>
-                当前 ↓ {interfaceRuntimeSummary.available
+                当前 {interfaceRuntimeSummary.available
                   ? formatRate(interfaceRuntimeSummary.receiveBytesPerSecond)
                   : "—"}
               </small>
@@ -1331,23 +1338,10 @@ export default function InterfaceEditorPage() {
                   : "暂不可用"}
               </strong>
               <small>
-                当前 ↑ {interfaceRuntimeSummary.available
+                当前 {interfaceRuntimeSummary.available
                   ? formatRate(interfaceRuntimeSummary.sendBytesPerSecond)
                   : "—"}
               </small>
-            </dd>
-          </div>
-          <div>
-            <dt>活跃端点</dt>
-            <dd>
-              <strong>
-                {interfaceRuntimeSummary.available
-                  ? `${interfaceRuntimeSummary.activePeers}/${interfaceRuntimeSummary.totalPeers}`
-                  : "暂不可用"}
-              </strong>
-              {interfaceRuntimeSummary.available && (
-                <small>最近 3 分钟有握手</small>
-              )}
             </dd>
           </div>
         </dl>
@@ -1391,9 +1385,33 @@ export default function InterfaceEditorPage() {
 
       <section className="peers-section">
         <header className="peers-section-header">
-          <div>
+          <div className="peers-title-summary">
             <h2>Peers</h2>
-            <span>{config?.peers.length ?? 0}</span>
+            <span className="peer-count is-total">
+              总数 <strong>{interfaceRuntimeSummary.totalPeers}</strong>
+            </span>
+            <span
+              className={`peer-count is-online ${
+                onlinePeerCount === undefined ? "is-unknown" : ""
+              }`.trim()}
+              title={
+                onlinePeerCount === undefined
+                  ? "运行状态暂不可用"
+                  : "最近 3 分钟有握手"
+              }
+            >
+              在线 <strong>{onlinePeerCount ?? "—"}</strong>
+            </span>
+            <span
+              className={`peer-count is-offline ${
+                offlinePeerCount === undefined ? "is-unknown" : ""
+              }`.trim()}
+              title={
+                offlinePeerCount === undefined ? "运行状态暂不可用" : undefined
+              }
+            >
+              离线 <strong>{offlinePeerCount ?? "—"}</strong>
+            </span>
           </div>
           <div className="peers-heading-actions">
             <button

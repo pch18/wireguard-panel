@@ -4654,23 +4654,34 @@ svg {
 }
 
 .interface-runtime-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.42rem;
-  margin: 0;
-  padding: 0 1rem 0.8rem;
+  display: flex;
+  align-items: center;
+  margin: 0 1rem 0.55rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid #e8efec;
+  border-bottom: 1px solid #e8efec;
 }
 
 .interface-runtime-summary > div {
+  display: flex;
   min-width: 0;
-  padding: 0.58rem 0.68rem;
-  border: 1px solid #dce8e4;
-  border-radius: 0.48rem;
-  background: #f4f9f7;
+  flex: 1 1 0;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0 0.75rem;
+}
+
+.interface-runtime-summary > div:first-child {
+  padding-left: 0;
+}
+
+.interface-runtime-summary > div + div {
+  border-left: 1px solid #dfe8e4;
 }
 
 .interface-runtime-summary dt {
-  margin-bottom: 0.22rem;
+  flex: none;
+  margin: 0;
   color: var(--faint);
   font-size: 0.65rem;
   font-weight: 750;
@@ -4678,8 +4689,9 @@ svg {
 
 .interface-runtime-summary dd {
   display: flex;
+  min-width: 0;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.5rem;
   margin: 0;
   color: #34414b;
@@ -4688,7 +4700,7 @@ svg {
 
 .interface-runtime-summary strong {
   overflow: hidden;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4756,9 +4768,10 @@ svg {
 .traffic-chart-canvas {
   position: relative;
   min-height: 5rem;
+  cursor: crosshair;
 }
 
-.traffic-chart-canvas > span {
+.traffic-chart-empty {
   position: absolute;
   z-index: 1;
   inset: 0;
@@ -4798,6 +4811,62 @@ svg {
   stroke: #168b62;
 }
 
+.traffic-chart-crosshair {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgb(60 78 91 / 38%);
+  pointer-events: none;
+}
+
+.traffic-chart-tooltip {
+  position: absolute;
+  z-index: 3;
+  top: 0.28rem;
+  display: grid;
+  min-width: 8.4rem;
+  gap: 0.18rem;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.42rem;
+  background: rgb(37 49 59 / 94%);
+  box-shadow: 0 4px 14px rgb(18 28 36 / 20%);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.traffic-chart-tooltip.is-start {
+  transform: translateX(0);
+}
+
+.traffic-chart-tooltip.is-center {
+  transform: translateX(-50%);
+}
+
+.traffic-chart-tooltip.is-end {
+  transform: translateX(-100%);
+}
+
+.traffic-chart-tooltip time {
+  color: #dce5eb;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-chart-tooltip .is-receive {
+  color: #78c5ff;
+}
+
+.traffic-chart-tooltip .is-send {
+  color: #75dab5;
+}
+
 .traffic-chart-axis {
   display: flex;
   justify-content: space-between;
@@ -4830,6 +4899,10 @@ svg {
   height: 3.25rem;
 }
 
+.peer-traffic-preview .traffic-chart-canvas {
+  cursor: pointer;
+}
+
 .peers-section {
   margin-top: 1.6rem;
 }
@@ -4842,10 +4915,12 @@ svg {
   margin-bottom: 0.75rem;
 }
 
-.peers-section-header > div:first-child {
+.peers-title-summary {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.65rem;
 }
 
 .peers-section-header h2 {
@@ -4854,17 +4929,39 @@ svg {
   letter-spacing: -0.015em;
 }
 
-.peers-section-header > div:first-child > span {
-  display: grid;
-  min-width: 1.4rem;
-  height: 1.4rem;
-  padding: 0 0.35rem;
-  place-items: center;
-  border-radius: 999px;
-  background: #e6ebee;
-  color: #64717c;
+.peer-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  color: var(--faint);
   font-size: 0.65rem;
-  font-weight: 750;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.peer-count strong {
+  color: #52606b;
+  font-size: inherit;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.peer-count.is-online::before,
+.peer-count.is-offline::before {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-radius: 50%;
+  background: #21a676;
+  content: "";
+}
+
+.peer-count.is-offline::before {
+  background: #b0bac1;
+}
+
+.peer-count.is-unknown::before {
+  background: #d1d8dd;
 }
 
 .peer-card-grid {
@@ -5416,13 +5513,8 @@ svg {
   }
 
   .interface-runtime-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding-right: 0.75rem;
-    padding-left: 0.75rem;
-  }
-
-  .interface-runtime-summary > div:last-child {
-    grid-column: 1 / -1;
+    margin-right: 0.75rem;
+    margin-left: 0.75rem;
   }
 
   .interface-traffic-chart {
@@ -5463,14 +5555,6 @@ svg {
   .interface-fact-grid dd {
     overflow-wrap: anywhere;
     white-space: normal;
-  }
-
-  .interface-runtime-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .interface-runtime-summary > div:last-child {
-    grid-column: auto;
   }
 
   .peers-section-header {
