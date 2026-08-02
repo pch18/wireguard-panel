@@ -9,6 +9,7 @@ type ModalProps = {
   children: ReactNode;
   className?: string;
   closeDisabled?: boolean;
+  covered?: boolean;
 };
 
 export default function Modal({
@@ -19,14 +20,17 @@ export default function Modal({
   children,
   className = "",
   closeDisabled = false,
+  covered = false,
 }: ModalProps) {
   const titleID = useId();
   const descriptionID = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
+  const coveredRef = useRef(covered);
   onCloseRef.current = onClose;
   closeDisabledRef.current = closeDisabled;
+  coveredRef.current = covered;
 
   useEffect(() => {
     const previousFocus =
@@ -44,8 +48,11 @@ export default function Modal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        if (!closeDisabledRef.current) onCloseRef.current();
+        if (!coveredRef.current && !closeDisabledRef.current) {
+          onCloseRef.current();
+        }
       }
+      if (coveredRef.current) return;
       if (event.key !== "Tab" || !dialog) return;
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(
@@ -73,8 +80,9 @@ export default function Modal({
 
   return (
     <div
-      className="modal-backdrop"
+      className={`modal-backdrop ${covered ? "is-covered" : ""}`.trim()}
       data-modal-variant={variant}
+      aria-hidden={covered || undefined}
       onMouseDown={(event) => {
         if (
           !closeDisabled &&

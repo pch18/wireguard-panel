@@ -1434,10 +1434,10 @@ export default function InterfaceEditorPage() {
                 const peerValidationErrors =
                   scopedValidationErrors.peerErrors[peerIndex] ?? [];
                 const available = runtimeMetricsAvailable && status?.available;
-                const rate = {
+                const peerRate = {
                   receiveBytesPerSecond:
-                    status?.receiveBytesPerSecond ?? 0,
-                  sendBytesPerSecond: status?.sendBytesPerSecond ?? 0,
+                    status?.sendBytesPerSecond ?? 0,
+                  sendBytesPerSecond: status?.receiveBytesPerSecond ?? 0,
                 };
                 return (
                   <article
@@ -1541,6 +1541,7 @@ export default function InterfaceEditorPage() {
                           >
                             <TrafficChart
                               compact
+                              perspective="peer"
                               points={peerTraffic.get(peer.publicKey) ?? []}
                               nowMs={clockNow}
                               currentRateAvailable={runtimeMetricsAvailable}
@@ -1550,24 +1551,24 @@ export default function InterfaceEditorPage() {
                             <span className="is-receive">
                               <strong>
                                 ↓ {available
-                                  ? formatBytes(status?.receivedBytes ?? 0)
+                                  ? formatBytes(status?.sentBytes ?? 0)
                                   : "—"}
                               </strong>
                               <small>
                                 {available
-                                  ? formatRate(rate.receiveBytesPerSecond)
+                                  ? formatRate(peerRate.receiveBytesPerSecond)
                                   : "—"}
                               </small>
                             </span>
                             <span className="is-send">
                               <strong>
                                 ↑ {available
-                                  ? formatBytes(status?.sentBytes ?? 0)
+                                  ? formatBytes(status?.receivedBytes ?? 0)
                                   : "—"}
                               </strong>
                               <small>
                                 {available
-                                  ? formatRate(rate.sendBytesPerSecond)
+                                  ? formatRate(peerRate.sendBytesPerSecond)
                                   : "—"}
                               </small>
                             </span>
@@ -1724,6 +1725,7 @@ export default function InterfaceEditorPage() {
         >
           <div className="peer-traffic-modal-body">
             <TrafficChart
+              perspective="peer"
               points={peerTraffic.get(trafficPeer.publicKey) ?? []}
               nowMs={clockNow}
               currentRateAvailable={runtimeMetricsAvailable}

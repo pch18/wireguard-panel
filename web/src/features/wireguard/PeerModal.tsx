@@ -127,8 +127,7 @@ export default function PeerModal({
     }
   };
 
-  if (keyRegenerationConfirmation) {
-    return (
+  const secondaryModal = keyRegenerationConfirmation ? (
       <Modal
         title="重新生成 Peer 密钥对？"
         variant="input"
@@ -167,16 +166,12 @@ export default function PeerModal({
           </button>
         </footer>
       </Modal>
-    );
-  }
-
-  if (confirmation) {
-    return (
+    ) : confirmation ? (
       <Modal
         title="保存并重启 Interface？"
         variant="input"
         closeDisabled={pending}
-        onClose={onClose}
+        onClose={() => setConfirmation(undefined)}
         className="is-compact runtime-confirmation-dialog"
       >
         <div className="runtime-confirmation-note is-stop">
@@ -211,17 +206,18 @@ export default function PeerModal({
           </button>
         </footer>
       </Modal>
-    );
-  }
+    ) : null;
 
   return (
-    <Modal
-      title={initial ? "编辑 Peer" : "添加 Peer"}
-      variant="input"
-      closeDisabled={pending}
-      onClose={onClose}
-      className="is-interface-editor is-peer-editor"
-    >
+    <>
+      <Modal
+        title={initial ? "编辑 Peer" : "添加 Peer"}
+        variant="input"
+        closeDisabled={pending}
+        covered={Boolean(secondaryModal)}
+        onClose={onClose}
+        className="is-interface-editor is-peer-editor"
+      >
       <form
         ref={formRef}
         className="modal-form interface-modal-form peer-form"
@@ -335,6 +331,8 @@ export default function PeerModal({
           </button>
         </footer>
       </form>
-    </Modal>
+      </Modal>
+      {secondaryModal}
+    </>
   );
 }

@@ -17,6 +17,7 @@ type Props = {
   points: TrafficPoint[];
   nowMs: number;
   compact?: boolean;
+  perspective?: "interface" | "peer";
   showHorizontalAxis?: boolean;
   windowMinutes?: number;
   currentRateAvailable?: boolean;
@@ -125,6 +126,7 @@ export default function TrafficChart({
   points,
   nowMs,
   compact = false,
+  perspective = "interface",
   showHorizontalAxis = !compact,
   windowMinutes = 30,
   currentRateAvailable = true,
@@ -146,16 +148,21 @@ export default function TrafficChart({
   const height = compact ? compactHeight : overviewHeight;
   const inset = compact ? 8 : 12;
   const axisTickCount = compact ? 3 : 4;
+  const receiveRateOf = (point: ParsedPoint) =>
+    perspective === "peer"
+      ? point.sendBytesPerSecond
+      : point.receiveBytesPerSecond;
+  const sendRateOf = (point: ParsedPoint) =>
+    perspective === "peer"
+      ? point.receiveBytesPerSecond
+      : point.sendBytesPerSecond;
   const ceiling = Math.max(
     1,
-    ...displayPoints.flatMap((point) => [
-      point.receiveBytesPerSecond,
-      point.sendBytesPerSecond,
-    ]),
+    ...displayPoints.flatMap((point) => [receiveRateOf(point), sendRateOf(point)]),
   );
   const receivePath = linePath(
     displayPoints,
-    (point) => point.receiveBytesPerSecond,
+    receiveRateOf,
     start,
     nowMs,
     ceiling,
@@ -164,7 +171,7 @@ export default function TrafficChart({
   );
   const sendPath = linePath(
     displayPoints,
-    (point) => point.sendBytesPerSecond,
+    sendRateOf,
     start,
     nowMs,
     ceiling,
@@ -177,10 +184,10 @@ export default function TrafficChart({
     trafficGapToleranceMilliseconds,
   );
   const receiveRate = currentRateAvailable
-    ? formatRate(latest.receiveBytesPerSecond)
+    ? formatRate(receiveRateOf(latest))
     : "—";
   const sendRate =
-    currentRateAvailable ? formatRate(latest.sendBytesPerSecond) : "—";
+    currentRateAvailable ? formatRate(sendRateOf(latest)) : "—";
   const hoveredPosition = hoveredPoint
     ? trafficPlotPosition(
         hoveredPoint.timestamp,
@@ -320,10 +327,10 @@ export default function TrafficChart({
               }).format(hoveredPoint.timestamp)}
             </time>
             <span className="is-receive">
-              接收 {formatRate(hoveredPoint.receiveBytesPerSecond)}
+              接收 {formatRate(receiveRateOf(hoveredPoint))}
             </span>
             <span className="is-send">
-              发送 {formatRate(hoveredPoint.sendBytesPerSecond)}
+              发送 {formatRate(sendRateOf(hoveredPoint))}
             </span>
           </div>,
           document.body,
