@@ -173,15 +173,29 @@ func Serialize(config model.Interface) ([]byte, error) {
 	return []byte(output.String()), nil
 }
 
-// ParsePeer parses exactly one native [Peer] section. Panel metadata comments
-// may appear immediately before or inside the section. The returned model is
-// normalized in the same way as a Peer read from a complete Interface file.
-func ParsePeer(data []byte) (model.Peer, error) {
-	peer := model.Peer{AllowedIPs: make([]string, 0)}
+type peerMetadataComment struct {
+	line int
+	text string
+}
+
+// ParsePeers parses one or more native [Peer] sections. Panel metadata comments
+// may appear immediately before or inside each section. Every returned model is
+// normalized before the caller starts a configuration transaction.
+func ParsePeers(data []byte) ([]model.Peer, error) {
+	peers := make([]model.Peer, 0)
+	pendingComments := make([]peerMetadataComment, 0)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	peerSeen := false
 	lineNumber := 0
+	applyPendingComments := func(peer *model.Peer) error {
+		for _, comment := range pendingComments {
+			if err := parsePeerMetadataComment(peer, comment.text); err != nil {
+				return parseError(comment.line, "%v", err)
+			}
+		}
+		pendingComments = pendingComments[:0]
+		return nil
+	}
 
 	for scanner.Scan() {
 		lineNumber++
@@ -193,12 +207,10 @@ func ParsePeer(data []byte) (model.Peer, error) {
 			continue
 		}
 		if strings.HasPrefix(rawLine, "#") {
-			if err := parsePeerMetadataComment(
-				&peer,
-				strings.TrimSpace(strings.TrimPrefix(rawLine, "#")),
-			); err != nil {
-				return model.Peer{}, parseError(lineNumber, "%v", err)
-			}
+			pendingComments = append(pendingComments, peerMetadataComment{
+				line: lineNumber,
+				text: strings.TrimSpace(strings.TrimPrefix(rawLine, "#")),
+			})
 			continue
 		}
 		if commentAt := strings.Index(rawLine, "#"); commentAt >= 0 {
@@ -209,44 +221,71 @@ func ParsePeer(data []byte) (model.Peer, error) {
 		}
 		if strings.HasPrefix(rawLine, "[") {
 			if !strings.EqualFold(rawLine, "[Peer]") {
-				return model.Peer{}, parseError(
+				return nil, parseError(
 					lineNumber,
-					"单个 Peer 配置只能包含 [Peer] 段",
+					"Peer 配置只能包含 [Peer] 段",
 				)
 			}
-			if peerSeen {
-				return model.Peer{}, parseError(lineNumber, "只能有一个 [Peer]")
+			peer := model.Peer{AllowedIPs: make([]string, 0)}
+			if err := applyPendingComments(&peer); err != nil {
+				return nil, err
 			}
-			peerSeen = true
+			peers = append(peers, peer)
 			continue
 		}
 
 		key, value, found := strings.Cut(rawLine, "=")
-		if !found || !peerSeen {
-			return model.Peer{}, parseError(lineNumber, "配置项格式无效")
+		if !found || len(peers) == 0 {
+			return nil, parseError(lineNumber, "配置项格式无效")
+		}
+		peer := &peers[len(peers)-1]
+		if err := applyPendingComments(peer); err != nil {
+			return nil, err
 		}
 		if err := parsePeerField(
-			&peer,
+			peer,
 			strings.TrimSpace(key),
 			strings.TrimSpace(value),
 		); err != nil {
-			return model.Peer{}, parseError(lineNumber, "%v", err)
+			return nil, parseError(lineNumber, "%v", err)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return model.Peer{}, fmt.Errorf("%w: read Peer configuration: %v", ErrInvalidFile, err)
+		return nil, fmt.Errorf("%w: read Peer configuration: %v", ErrInvalidFile, err)
 	}
-	if !peerSeen {
-		return model.Peer{}, fmt.Errorf("%w: missing [Peer]", ErrInvalidFile)
+	if len(peers) == 0 {
+		return nil, fmt.Errorf("%w: missing [Peer]", ErrInvalidFile)
 	}
-	if peer.Name == "" {
-		peer.Name = "Imported Peer"
+	if err := applyPendingComments(&peers[len(peers)-1]); err != nil {
+		return nil, err
 	}
-	normalized, err := NormalizePeer(peerInput(peer))
+	for index := range peers {
+		if peers[index].Name == "" {
+			peers[index].Name = "Imported Peer"
+			if len(peers) > 1 {
+				peers[index].Name = fmt.Sprintf("Imported Peer %d", index+1)
+			}
+		}
+		normalized, err := NormalizePeer(peerInput(peers[index]))
+		if err != nil {
+			return nil, fmt.Errorf("%w: Peer %d: %v", ErrInvalidFile, index+1, err)
+		}
+		peers[index] = peerFromInput(normalized)
+	}
+	return peers, nil
+}
+
+// ParsePeer keeps callers that require a single section strict while the batch
+// import path uses ParsePeers.
+func ParsePeer(data []byte) (model.Peer, error) {
+	peers, err := ParsePeers(data)
 	if err != nil {
-		return model.Peer{}, fmt.Errorf("%w: %v", ErrInvalidFile, err)
+		return model.Peer{}, err
 	}
-	return peerFromInput(normalized), nil
+	if len(peers) != 1 {
+		return model.Peer{}, fmt.Errorf("%w: 只能有一个 [Peer]", ErrInvalidFile)
+	}
+	return peers[0], nil
 }
 
 // SerializePeer returns a canonical, self-contained [Peer] section suitable

@@ -305,6 +305,36 @@ PersistentKeepalive = 25
 	}
 }
 
+func TestParseMultiplePeersKeepsMetadataWithEachSection(t *testing.T) {
+	firstPublicKey := testPublicKey(t)
+	secondPublicKey := testPublicKey(t)
+	source := fmt.Sprintf(`# Name = Laptop
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.20.0.2/32
+
+# Name = Phone
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.20.0.3/32
+`, firstPublicKey, secondPublicKey)
+
+	peers, err := ParsePeers([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 2 ||
+		peers[0].Name != "Laptop" ||
+		peers[0].PublicKey != firstPublicKey ||
+		peers[1].Name != "Phone" ||
+		peers[1].PublicKey != secondPublicKey {
+		t.Fatalf("unexpected parsed Peers: %#v", peers)
+	}
+	if _, err := ParsePeer([]byte(source)); !errors.Is(err, ErrInvalidFile) {
+		t.Fatalf("single Peer parser accepted a batch: %v", err)
+	}
+}
+
 func TestParseSinglePeerRejectsWrongSectionsAndUnknownFields(t *testing.T) {
 	wrongSection := fmt.Sprintf("[Interface]\nPrivateKey = %s\n", testPrivateKey(t))
 	if _, err := ParsePeer([]byte(wrongSection)); err == nil || !errors.Is(err, ErrInvalidFile) {

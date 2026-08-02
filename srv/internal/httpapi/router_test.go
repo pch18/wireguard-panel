@@ -1056,11 +1056,17 @@ Address = 10.93.0.1/24
 	}
 
 	_, peerPublicKey := testWireGuardKeyPair(t)
+	_, secondPeerPublicKey := testWireGuardKeyPair(t)
 	peerSource := fmt.Sprintf(`# Name = API peer
 [Peer]
 PublicKey = %s
 AllowedIPs = 10.93.0.2/32
-`, peerPublicKey)
+
+# Name = API peer 2
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.93.0.3/32
+`, peerPublicKey, secondPeerPublicKey)
 	peerImported := performJSONWithRevision(
 		t,
 		router,
@@ -1076,8 +1082,10 @@ AllowedIPs = 10.93.0.2/32
 	if err := json.Unmarshal(peerImported.Body.Bytes(), &config); err != nil {
 		t.Fatal(err)
 	}
-	if len(config.Peers) != 1 || config.Peers[0].Name != "API peer" {
-		t.Fatalf("unexpected imported Peer: %#v", config.Peers)
+	if len(config.Peers) != 2 ||
+		config.Peers[0].Name != "API peer" ||
+		config.Peers[1].Name != "API peer 2" {
+		t.Fatalf("unexpected imported Peers: %#v", config.Peers)
 	}
 	peerExported := performJSON(
 		t,

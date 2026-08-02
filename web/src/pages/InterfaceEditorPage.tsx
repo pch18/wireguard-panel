@@ -1023,7 +1023,7 @@ export default function InterfaceEditorPage() {
   ) => {
     if (interfaceID === undefined || !config) return;
     setImportPending(true);
-    const toastID = showToast("正在导入 Peer…", "loading", 0);
+    const toastID = showToast("正在校验并导入 Peer…", "loading", 0);
     try {
       const saved = await importPeerConfig(
         interfaceID,
@@ -1502,6 +1502,14 @@ export default function InterfaceEditorPage() {
                         >
                           <span>公钥</span>
                           <MiddleEllipsisKey value={peer.publicKey} />
+                          {!peer.privateKey.trim() && (
+                            <small
+                              className="peer-card-private-key-note"
+                              title="未保存该 Peer 的私钥"
+                            >
+                              无私钥
+                            </small>
+                          )}
                         </div>
 
                         <div
@@ -1770,10 +1778,14 @@ export default function InterfaceEditorPage() {
       {importTarget === "peer" && !restartRetry && (
         <ConfigTextModal
           title="导入 Peer"
+          description="支持一次粘贴多个 [Peer] 段；全部校验通过后才会统一导入。"
           mode="import"
           value={peerImportText}
           pending={importPending}
-          placeholder={"[Peer]\nPublicKey = …\nAllowedIPs = 10.20.0.2/32"}
+          submitLabel="校验并导入全部"
+          placeholder={
+            "[Peer]\n# Name = Peer 1\nPublicKey = …\nAllowedIPs = 10.20.0.2/32\n\n[Peer]\n# Name = Peer 2\nPublicKey = …\nAllowedIPs = 10.20.0.3/32"
+          }
           onClose={() => {
             setImportTarget(null);
             setPeerImportText("");

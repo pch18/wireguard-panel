@@ -329,7 +329,7 @@ func trafficPointsAfter(points []model.TrafficPoint, after time.Time) []model.Tr
 			return points[index].SampledAt.After(after)
 		})
 	}
-	return append([]model.TrafficPoint(nil), points[first:]...)
+	return append([]model.TrafficPoint{}, points[first:]...)
 }
 
 func (collector *Collector) Subscribe() (<-chan struct{}, func()) {

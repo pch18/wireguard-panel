@@ -354,6 +354,61 @@ Address = 10.92.0.1/24
 	}
 }
 
+func TestStoreBatchPeerImportIsAtomic(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Create("wg0", model.InterfaceInput{
+		PrivateKey: testPrivateKey(t),
+		Address:    []string{"10.94.0.1/24"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := testPublicKey(t)
+	secondKey := testPublicKey(t)
+	batch := fmt.Sprintf(`[Peer]
+PublicKey = %s
+AllowedIPs = 10.94.0.2/32
+
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.94.0.3/32
+`, firstKey, secondKey)
+	imported, err := store.ImportPeer(config.ID, config.Revision, []byte(batch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Peers) != 2 {
+		t.Fatalf("batch import added %d Peers, want 2", len(imported.Peers))
+	}
+
+	thirdKey := testPublicKey(t)
+	conflictingBatch := fmt.Sprintf(`[Peer]
+PublicKey = %s
+AllowedIPs = 10.94.0.4/32
+
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.94.0.5/32
+`, thirdKey, firstKey)
+	if _, err := store.ImportPeer(
+		config.ID,
+		imported.Revision,
+		[]byte(conflictingBatch),
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("conflicting batch returned %v", err)
+	}
+	after, err := store.Get(config.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Peers) != 2 || after.Revision != imported.Revision {
+		t.Fatalf("rejected batch changed configuration: %#v", after.Peers)
+	}
+}
+
 func TestStructuredUpdatePreservesUnmanagedWGQuickFieldsVerbatim(t *testing.T) {
 	directory := t.TempDir()
 	store, err := NewStore(directory)

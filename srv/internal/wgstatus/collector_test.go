@@ -290,4 +290,12 @@ func TestCollectorRetainsTrafficHistoryAndNotifiesSubscribers(t *testing.T) {
 	if len(after) != 1 {
 		t.Fatalf("exclusive history cursor returned %#v", after)
 	}
+	_, emptyPeerTraffic := collector.TrafficHistory(
+		"wg0",
+		time.Time{},
+		[]string{"new-peer-without-history"},
+	)
+	if emptyPeerTraffic["new-peer-without-history"] == nil {
+		t.Fatal("Peer without traffic history returned a nil slice")
+	}
 }

@@ -366,15 +366,26 @@ func (store *Store) ImportPeerApplied(
 	tunnels TunnelController,
 	restartConfirmed bool,
 ) (model.Interface, error) {
-	peer, err := ParsePeer(data)
+	peers, err := ParsePeers(data)
 	if err != nil {
 		return model.Interface{}, err
 	}
 	return store.mutateApplied(ctx, id, expectedRevision, tunnels, restartConfirmed, func(config *model.Interface) error {
-		if peerIndexByPublicKey(config.Peers, peer.PublicKey) >= 0 {
-			return duplicatePeerPublicKey()
+		publicKeys := make(map[string]bool, len(config.Peers)+len(peers))
+		for _, peer := range config.Peers {
+			publicKeys[peer.PublicKey] = true
 		}
-		config.Peers = append(config.Peers, peer)
+		for index, peer := range peers {
+			if publicKeys[peer.PublicKey] {
+				return fmt.Errorf(
+					"%w: 第 %d 个 Peer 的 PublicKey 已存在或在本次导入中重复",
+					ErrConflict,
+					index+1,
+				)
+			}
+			publicKeys[peer.PublicKey] = true
+		}
+		config.Peers = append(config.Peers, peers...)
 		return validatePeerSet(*config)
 	})
 }

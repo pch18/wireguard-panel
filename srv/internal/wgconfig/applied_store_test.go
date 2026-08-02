@@ -3,6 +3,7 @@ package wgconfig
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -305,6 +306,43 @@ func TestHotMutationRemainsIncremental(t *testing.T) {
 	}
 	if !containsCall(tunnels.calls, "incremental wg0") {
 		t.Fatalf("hot mutation did not apply incrementally: %#v", tunnels.calls)
+	}
+}
+
+func TestBatchPeerImportUsesOneIncrementalTransaction(t *testing.T) {
+	store, config, _ := createRunningTestInterface(t)
+	tunnels := testTunnel(store, true)
+	batch := fmt.Sprintf(`[Peer]
+PublicKey = %s
+AllowedIPs = 10.54.0.2/32
+
+[Peer]
+PublicKey = %s
+AllowedIPs = 10.54.0.3/32
+`, testPublicKey(t), testPublicKey(t))
+
+	saved, err := store.ImportPeerApplied(
+		context.Background(),
+		config.ID,
+		config.Revision,
+		[]byte(batch),
+		tunnels,
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Peers) != 2 {
+		t.Fatalf("batch import added %d Peers, want 2", len(saved.Peers))
+	}
+	incrementalCalls := 0
+	for _, call := range tunnels.calls {
+		if call == "incremental wg0" {
+			incrementalCalls++
+		}
+	}
+	if incrementalCalls != 1 || len(tunnels.downConfigs) != 0 || len(tunnels.upConfigs) != 0 {
+		t.Fatalf("batch import was not one hot transaction: %#v", tunnels.calls)
 	}
 }
 
