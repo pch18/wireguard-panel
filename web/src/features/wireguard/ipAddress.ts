@@ -57,7 +57,7 @@ function parseIPv4(value: string) {
   if (parts.length !== 4) return null;
   let address = 0n;
   for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
+    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
     const octet = Number(part);
     if (octet > 255) return null;
     address = (address << 8n) | BigInt(octet);
@@ -173,7 +173,9 @@ export function parseIPAddress(value: string, expectedFamily?: IPFamily) {
 
 export function parseCIDR(value: string): ParsedCIDR | null {
   const parts = value.trim().split("/");
-  if (parts.length !== 2 || !/^\d{1,3}$/.test(parts[1])) return null;
+  if (parts.length !== 2 || !/^(0|[1-9]\d{0,2})$/.test(parts[1])) {
+    return null;
+  }
   const family: IPFamily = parts[0].includes(":") ? 6 : 4;
   const bits = totalBits(family);
   const prefix = Number(parts[1]);
@@ -352,6 +354,14 @@ export function availablePrefixes(
       prefixAvailability(family, prefix, allowedRanges, occupiedRanges)
         .available,
   );
+}
+
+export function prefixesIncludingCurrent(
+  available: number[],
+  current: number | null,
+) {
+  if (current === null || available.includes(current)) return available;
+  return [current, ...available];
 }
 
 export function segmentOptions(

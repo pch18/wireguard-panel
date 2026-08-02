@@ -123,6 +123,7 @@ export default function InterfaceModal({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (pending || mtuProbePending) return;
     const nextListenPort = optionalNumber(listenPort);
     const nextMTU = optionalNumber(mtu);
     if (nextListenPort !== undefined && nextListenPort > 65_535) {
@@ -379,6 +380,7 @@ export default function InterfaceModal({
             inputMode="numeric"
             pattern="[0-9]*"
             value={mtu}
+            disabled={mtuProbePending}
             placeholder="自动"
             onChange={(event) => setMTU(digitsOnly(event.target.value))}
           />
@@ -432,6 +434,7 @@ export default function InterfaceModal({
             type="submit"
             disabled={
               pending ||
+              mtuProbePending ||
               input.privateKey.trim() === "" ||
               !addressComplete ||
               Boolean(invalidRouteConstraint)

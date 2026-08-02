@@ -20,6 +20,7 @@ import {
   normalizeAddressRow,
   parseCIDR,
   parseCIDRs,
+  prefixesIncludingCurrent,
   parseIPAddress,
   selectableSegmentOptions,
   segmentBits,
@@ -682,6 +683,14 @@ export default function AllowedIPsEditor({
           const rowInvalid = result.error !== "";
           const rowOutOfRange = isConstraintViolation(result);
           const ipv4AddressRow = toIPv4AddressRow(row);
+          const availablePrefixValues = isInterface
+            ? Array.from(
+                { length: (row.family === 4 ? 32 : 128) + 1 },
+                (_, prefix) => prefix,
+              )
+            : availablePrefixes(row.family, effectiveAllowedRanges, []);
+          const currentPrefixUnavailable =
+            row.prefix !== null && !availablePrefixValues.includes(row.prefix);
           return (
             <div
               className={`allowed-ip-row ${rowInvalid ? "is-invalid" : ""} ${
@@ -802,15 +811,19 @@ export default function AllowedIPsEditor({
                 onChange={(event) => setPrefix(row.id, event.target.value)}
               >
                 <option value="">选择掩码</option>
-                {(isInterface
-                  ? Array.from(
-                      { length: (row.family === 4 ? 32 : 128) + 1 },
-                      (_, prefix) => prefix,
-                    )
-                  : availablePrefixes(row.family, effectiveAllowedRanges, [])
+                {prefixesIncludingCurrent(
+                  availablePrefixValues,
+                  row.prefix,
                 ).map((prefix) => (
-                  <option key={prefix} value={prefix}>
+                  <option
+                    key={prefix}
+                    value={prefix}
+                    disabled={currentPrefixUnavailable && prefix === row.prefix}
+                  >
                     {prefixLabel(prefix, row.family)}
+                    {currentPrefixUnavailable && prefix === row.prefix
+                      ? " · 当前值不符合约束"
+                      : ""}
                   </option>
                 ))}
               </select>

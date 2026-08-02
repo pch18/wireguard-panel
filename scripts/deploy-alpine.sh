@@ -66,13 +66,11 @@ if [ -z "$release_tag" ]; then
     curl -fsSL https://api.github.com/repos/pch18/wireguard-panel/releases/latest
   } | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
 fi
-case "$release_tag" in
-  v[0-9]*.[0-9]*.[0-9]*) ;;
-  *)
-    printf 'Invalid or unavailable release tag: %s\n' "$release_tag" >&2
-    exit 1
-    ;;
-esac
+if ! printf '%s\n' "$release_tag" | \
+  grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  printf 'Invalid or unavailable release tag: %s\n' "$release_tag" >&2
+  exit 1
+fi
 
 printf 'Deploying WireGuard Panel %s to %s...\n' "$release_tag" "$ssh_target"
 ssh_run sh -s -- "$release_tag" "$panel_port" <<'REMOTE'

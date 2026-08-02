@@ -237,6 +237,27 @@ svg {
   color: var(--muted);
 }
 
+.route-load-error {
+  max-width: 32rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.route-load-error > svg {
+  width: 2.25rem;
+  height: 2.25rem;
+  color: var(--red);
+}
+
+.route-load-error > strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.route-load-error > span {
+  line-height: 1.6;
+}
+
 .login-page {
   display: grid;
   min-height: 100vh;
@@ -4129,7 +4150,7 @@ svg {
   justify-content: space-between;
   gap: 1rem;
   color: var(--faint);
-  font-size: 0.62rem;
+  font-size: 0.625rem;
 }
 
 .status-identity code {

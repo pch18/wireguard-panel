@@ -15,6 +15,7 @@ import {
   parseCIDR,
   parseCIDRs,
   parseIPAddress,
+  prefixesIncludingCurrent,
   selectableSegmentOptions,
   segmentOptions,
   validateAddressCIDR,
@@ -27,6 +28,8 @@ test("CIDR parser canonicalizes IPv4 and compressed IPv6", () => {
   assert.equal(formatIPv6(0n), "::");
   assert.equal(parseCIDR("2001:::1/64"), null);
   assert.equal(parseCIDR("10.0.0.1/33"), null);
+  assert.equal(parseCIDR("010.0.0.1/8"), null);
+  assert.equal(parseCIDR("10.0.0.1/08"), null);
 });
 
 test("IP parser preserves Interface host bits", () => {
@@ -196,6 +199,13 @@ test("prefix selectors expose only masks with a legal available subnet", () => {
     availablePrefixes(4, allowed, parseCIDRs(["10.0.0.0/8"])),
     Array.from({ length: 25 }, (_, index) => index + 8),
   );
+});
+
+test("prefix selectors retain a configured legacy mask while showing legal choices", () => {
+  const available = [8, 16, 24, 32];
+  assert.deepEqual(prefixesIncludingCurrent(available, 2), [2, ...available]);
+  assert.equal(prefixesIncludingCurrent(available, 24), available);
+  assert.equal(prefixesIncludingCurrent(available, null), available);
 });
 
 test("missing route ranges allow any valid address family", () => {

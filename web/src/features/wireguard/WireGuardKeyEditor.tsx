@@ -5,7 +5,7 @@ import {
   deriveWireGuardPublicKey,
   generateWireGuardKeyPair,
 } from "./browserKeys";
-import { isWireGuardKey } from "./keyUtils";
+import { isWireGuardKey, wireGuardKeyOnly } from "./keyUtils";
 
 type WireGuardKeyEditorProps = {
   idPrefix: string;
@@ -234,7 +234,7 @@ export default function WireGuardKeyEditor({
               showToast(privateValidation || "PrivateKey 不能为空", "error");
             }}
             onChange={(event) => {
-              const nextPrivateKey = event.target.value;
+              const nextPrivateKey = wireGuardKeyOnly(event.target.value);
               resolvedPrivateKey.current = "";
               setDerivedPublicKey("");
               onChangeRef.current(
@@ -282,7 +282,10 @@ export default function WireGuardKeyEditor({
               showToast(publicValidation || "PublicKey 不能为空", "error");
             }}
             onChange={(event) =>
-              onChangeRef.current(privateKey, event.target.value)
+              onChangeRef.current(
+                privateKey,
+                wireGuardKeyOnly(event.target.value),
+              )
             }
           />
           {publicValidation && (

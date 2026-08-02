@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Icon from "../../ui/Icon";
 import Modal from "../../ui/Modal";
 import { useToast } from "../../ui/Toast";
@@ -8,6 +8,7 @@ import {
   generateWireGuardPresharedKey,
 } from "./browserKeys";
 import WireGuardKeyEditor from "./WireGuardKeyEditor";
+import { peerEditorPlan } from "./peerEditorPlan";
 import { analyzePeerChange } from "./runtimeDiff";
 import {
   blankPeer,
@@ -48,6 +49,10 @@ export default function PeerModal({
     input: PeerInput;
     changes: string[];
   }>();
+  const editorPlan = useMemo(
+    () => peerEditorPlan(currentInterface, ipPlan),
+    [currentInterface, ipPlan],
+  );
 
   useEffect(() => {
     if (pending) formRef.current?.setAttribute("inert", "");
@@ -268,9 +273,9 @@ export default function PeerModal({
           key={`peer-addresses-${initial?.publicKey ?? "new"}`}
           initialValues={initial?.allowedIPs ?? []}
           showBlankRowWhenEmpty={!initial}
-          allowedRanges={ipPlan?.allowedRanges}
-          reservedAddresses={ipPlan?.reservedAddresses}
-          assignments={ipPlan?.assignments}
+          allowedRanges={editorPlan.allowedRanges}
+          reservedAddresses={editorPlan.reservedAddresses}
+          assignments={editorPlan.assignments}
           currentPeerPublicKey={initial?.publicKey}
           onChange={(allowedIPs, complete) => {
             setAllowedIPsComplete(complete);

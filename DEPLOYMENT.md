@@ -56,7 +56,8 @@ git config wireguard-panel.deployPanelPort 8080
 - 核对 Alpine Linux AMD64，并补齐 `curl`、`wireguard-tools`、`iproute2`；
 - 下载指定标签中的安装器，并将旧版安装器的 Latest URL 固定到目标标签，再下载、校验
   同版本 Release 资产；
-- 安装或升级 OpenRC 服务，失败时由安装器恢复上一版面板二进制；
+- 安装或升级 OpenRC 服务；安装器会等待回环健康接口成功，启动失败或健康检查失败时恢复
+  上一版二进制、服务定义、启动状态和开机自启状态；
 - 不执行 `wg-quick down/up`，不主动中断现有 WireGuard Interface；
 - 验证服务状态、开机自启、监听端口、服务器回环健康接口和客户端到服务器的健康接口。
 
@@ -65,7 +66,8 @@ git config wireguard-panel.deployPanelPort 8080
 
 ## 回滚
 
-新进程启动失败时安装器会自动恢复升级前的二进制。若新版本已成功启动但仍需人工回滚，
+新进程启动失败或未能通过回环健康检查时，安装器会自动恢复升级前的面板状态。若新版本
+已成功启动但仍需人工回滚，
 重新运行脚本并传入上一正式版本标签即可：
 
 ```sh

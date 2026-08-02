@@ -8,7 +8,10 @@ import {
   valuesToInline,
   valuesToLines,
 } from "../src/features/wireguard/formUtils.ts";
-import { isWireGuardKey } from "../src/features/wireguard/keyUtils.ts";
+import {
+  isWireGuardKey,
+  wireGuardKeyOnly,
+} from "../src/features/wireguard/keyUtils.ts";
 
 test("WireGuard list fields accept comma and line separated values", () => {
   assert.deepEqual(
@@ -51,4 +54,9 @@ test("WireGuard key validation accepts only canonical 32-byte Base64 keys", () =
     isWireGuardKey("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB="),
     false,
   );
+});
+
+test("WireGuard key fields discard typed and pasted whitespace", () => {
+  assert.equal(wireGuardKeyOnly("abc def"), "abcdef");
+  assert.equal(wireGuardKeyOnly(" abc\tdef\n "), "abcdef");
 });

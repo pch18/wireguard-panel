@@ -427,7 +427,13 @@ export default function InterfaceEditorPage() {
   const runtimeMetricsAvailable = Boolean(
     currentRuntime?.collectorAvailable && runtimeObservationFresh,
   );
-  const fileOnlyRuntime = currentRuntime?.runtimeControllable === false;
+  // Runtime controllability is a backend deployment capability, not a sampled
+  // property of one configuration revision. Retain it while a successful
+  // mutation advances the revision and the fresh status request is in flight.
+  const fileOnlyRuntime =
+    currentRuntime?.runtimeControllable === false ||
+    (runtime?.runtimeControllable === false &&
+      runtime.interfaceID === interfaceID);
   const runtimeRunning =
     !fileOnlyRuntime &&
     runtimeObservationFresh &&
@@ -606,7 +612,10 @@ export default function InterfaceEditorPage() {
       setConfig(saved);
       setInterfaceModalOpen(false);
       setRestartRetry(null);
-      await refreshIPPlan();
+      await Promise.all([
+        refreshIPPlan(),
+        refreshRuntime(saved.revision),
+      ]);
       dismissToast(toastID);
     } catch (error) {
       if (
@@ -797,7 +806,10 @@ export default function InterfaceEditorPage() {
           );
       configRevisionRef.current = saved.revision;
       setConfig(saved);
-      await refreshIPPlan();
+      await Promise.all([
+        refreshIPPlan(),
+        refreshRuntime(saved.revision),
+      ]);
       dismissToast(toastID);
       setEditingPeer(null);
       setRestartRetry(null);
@@ -861,7 +873,10 @@ export default function InterfaceEditorPage() {
       );
       configRevisionRef.current = saved.revision;
       setConfig(saved);
-      await refreshIPPlan();
+      await Promise.all([
+        refreshIPPlan(),
+        refreshRuntime(saved.revision),
+      ]);
       dismissToast(toastID);
       setDeletingPeer(null);
     } catch (error) {
@@ -1021,7 +1036,10 @@ export default function InterfaceEditorPage() {
       setImportTarget(null);
       setPeerImportText("");
       setRestartRetry(null);
-      await refreshIPPlan();
+      await Promise.all([
+        refreshIPPlan(),
+        refreshRuntime(saved.revision),
+      ]);
       dismissToast(toastID);
     } catch (error) {
       if (

@@ -4,14 +4,12 @@ set -eu
 
 asset="wireguard-panel_linux_amd64.tar.gz"
 release_tag="${WIREGUARD_PANEL_RELEASE_TAG:-}"
+if [ -n "$release_tag" ] && ! printf '%s\n' "$release_tag" | \
+  grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  printf 'wireguard-panel installer: invalid release tag: %s\n' "$release_tag" >&2
+  exit 1
+fi
 if [ -n "$release_tag" ]; then
-  case "$release_tag" in
-    v[0-9]*.[0-9]*.[0-9]*) ;;
-    *)
-      printf 'wireguard-panel installer: invalid release tag: %s\n' "$release_tag" >&2
-      exit 1
-      ;;
-  esac
   release="https://github.com/pch18/wireguard-panel/releases/download/${release_tag}"
 else
   release="https://github.com/pch18/wireguard-panel/releases/latest/download"
@@ -60,6 +58,75 @@ if [ -f "$service" ]; then
   cp -p "$service" "${temporary_directory}/wireguard-panel.openrc.previous"
   had_previous_service=true
 fi
+had_previous_default=false
+if rc-update show default 2>/dev/null | \
+  grep -Eq '(^|[[:space:]])wireguard-panel([[:space:]]|$)'; then
+  had_previous_default=true
+fi
+had_previous_running=false
+if [ "$had_previous_service" = true ] && \
+  rc-service wireguard-panel status >/dev/null 2>&1; then
+  had_previous_running=true
+fi
+
+panel_port=8080
+if [ -r /etc/conf.d/wireguard-panel ]; then
+  # OpenRC sources this root-owned file before starting the service. Source the
+  # same file so the health check verifies the port the process actually uses.
+  APP_PORT=""
+  # shellcheck disable=SC1091
+  . /etc/conf.d/wireguard-panel
+  panel_port="${APP_PORT:-8080}"
+fi
+case "$panel_port" in
+  ''|*[!0-9]*) fail "APP_PORT must be numeric" ;;
+esac
+
+panel_is_healthy() {
+  rc-service wireguard-panel status >/dev/null 2>&1 &&
+    curl -fsS --max-time 2 \
+      "http://127.0.0.1:${panel_port}/api/health" >/dev/null 2>&1
+}
+
+wait_for_panel() {
+  attempt=0
+  while ! panel_is_healthy; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] || return 1
+    sleep 1
+  done
+}
+
+rollback_installation() {
+  reason="$1"
+  rc-service wireguard-panel stop >/dev/null 2>&1 || true
+
+  if [ "$had_previous_binary" = true ]; then
+    install -m 0755 "${temporary_directory}/wireguard-panel.previous" "$binary"
+  else
+    rm -f "$binary"
+  fi
+  if [ "$had_previous_service" = true ]; then
+    install -m 0755 \
+      "${temporary_directory}/wireguard-panel.openrc.previous" "$service"
+  else
+    rm -f "$service"
+  fi
+  if [ "$had_previous_default" = true ]; then
+    rc-update add wireguard-panel default >/dev/null 2>&1 || true
+  else
+    rc-update del wireguard-panel default >/dev/null 2>&1 || true
+  fi
+
+  if [ "$had_previous_running" = true ]; then
+    if rc-service wireguard-panel start >/dev/null 2>&1 && wait_for_panel; then
+      fail "$reason; the previous panel was restored and is healthy"
+    fi
+    fail "$reason; restoring the previous panel did not recover a healthy service"
+  fi
+  fail "$reason; the previous stopped or uninstalled state was restored"
+}
+
 install -m 0755 "${temporary_directory}/wireguard-panel" "${binary}.new"
 mv "${binary}.new" "$binary"
 
@@ -82,19 +149,16 @@ depend() {
 OPENRC
 install -m 0755 "${temporary_directory}/wireguard-panel.openrc" "$service"
 
-rc-update add wireguard-panel default >/dev/null
+if ! rc-update add wireguard-panel default >/dev/null; then
+  rollback_installation "the panel could not be registered with OpenRC"
+fi
 if ! rc-service wireguard-panel restart; then
-  if [ "$had_previous_binary" = true ]; then
-    install -m 0755 "${temporary_directory}/wireguard-panel.previous" "$binary"
-    if [ "$had_previous_service" = true ]; then
-      install -m 0755 "${temporary_directory}/wireguard-panel.openrc.previous" "$service"
-    fi
-    rc-service wireguard-panel restart >/dev/null 2>&1 || true
-    fail "the new panel failed to start; the previous binary was restored"
-  fi
-  fail "the panel failed to start; WireGuard interfaces were not restarted"
+  rollback_installation "the new panel failed to start"
+fi
+if ! wait_for_panel; then
+  rollback_installation "the new panel started but did not become healthy"
 fi
 
-printf '\nWireGuard Panel installed: http://SERVER_IP:8080\n'
+printf '\nWireGuard Panel installed: http://SERVER_IP:%s\n' "$panel_port"
 printf 'Default login: admin/admin5555\n'
 printf 'Change the password from the account menu after signing in.\n'

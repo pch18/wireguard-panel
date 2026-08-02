@@ -240,7 +240,8 @@ curl -fsSL \
 - 安装二进制到 `/usr/local/bin/wireguard-panel`；
 - 写入 `/etc/init.d/wireguard-panel`，固定以 root 运行；
 - 注册并启动 `wireguard-panel` OpenRC 服务；
-- 升级失败时回滚到上一版面板二进制，不重启 WireGuard Interface；
+- 启动或回环健康检查失败时回滚上一版面板二进制、服务定义和启动状态，不重启
+  WireGuard Interface；
 - 不创建系统账户或额外的安装配置文件。
 
 服务首次启动后，程序自行创建权限为 `0700` 的 `/etc/wireguard-panel` 和权限为
