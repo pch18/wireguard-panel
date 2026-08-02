@@ -261,6 +261,9 @@ rc-service wireguard-panel restart
 
 安装脚本本身不会创建这个可选环境文件。目前只支持 Alpine Linux AMD64。
 
+维护者的 Release、生产部署、验收与回滚流程见 [DEPLOYMENT.md](DEPLOYMENT.md)。生产目标
+和 SSH 私钥只保存在本地 Git 配置中，不进入公开仓库。
+
 ## 项目结构
 
 ```text
@@ -284,7 +287,10 @@ rc-service wireguard-panel restart
 │   ├── web/                    # 前端构建产物
 │   └── main.go
 ├── install-alpine.sh           # Alpine/OpenRC 一键安装
-└── scripts/build-release.sh    # 原生 AMD64 Release 构建
+├── DEPLOYMENT.md               # Release、生产部署、验收与回滚
+└── scripts/
+    ├── build-release.sh        # 原生 AMD64 Release 构建
+    └── deploy-alpine.sh        # 指定 Release 的生产部署与验收
 ```
 
 ## 本地开发

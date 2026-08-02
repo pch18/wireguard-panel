@@ -3,7 +3,19 @@
 set -eu
 
 asset="wireguard-panel_linux_amd64.tar.gz"
-release="https://github.com/pch18/wireguard-panel/releases/latest/download"
+release_tag="${WIREGUARD_PANEL_RELEASE_TAG:-}"
+if [ -n "$release_tag" ]; then
+  case "$release_tag" in
+    v[0-9]*.[0-9]*.[0-9]*) ;;
+    *)
+      printf 'wireguard-panel installer: invalid release tag: %s\n' "$release_tag" >&2
+      exit 1
+      ;;
+  esac
+  release="https://github.com/pch18/wireguard-panel/releases/download/${release_tag}"
+else
+  release="https://github.com/pch18/wireguard-panel/releases/latest/download"
+fi
 binary="/usr/local/bin/wireguard-panel"
 service="/etc/init.d/wireguard-panel"
 
