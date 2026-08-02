@@ -62,6 +62,41 @@ func TestNormalizeInterfaceRequiresMaskForEveryAddress(t *testing.T) {
 	}
 }
 
+func TestNormalizeInterfaceAllowsClientEndpointToUseListenPort(t *testing.T) {
+	listenPort := uint16(51820)
+	for _, endpoint := range []string{
+		"vpn.example.com",
+		"192.0.2.10",
+		"2001:db8::10",
+		"[2001:db8::10]",
+		"vpn.example.com:20000",
+		"[2001:db8::10]:20000",
+	} {
+		normalized, err := NormalizeInterface(model.InterfaceInput{
+			PrivateKey:     testPrivateKey(t),
+			ListenPort:     &listenPort,
+			ClientEndpoint: endpoint,
+		})
+		if err != nil {
+			t.Errorf("ClientEndpoint %q was rejected: %v", endpoint, err)
+			continue
+		}
+		if normalized.ClientEndpoint != endpoint {
+			t.Errorf("ClientEndpoint changed to %q, want %q", normalized.ClientEndpoint, endpoint)
+		}
+	}
+}
+
+func TestNormalizeInterfaceRequiresListenPortForHostOnlyClientEndpoint(t *testing.T) {
+	_, err := NormalizeInterface(model.InterfaceInput{
+		PrivateKey:     testPrivateKey(t),
+		ClientEndpoint: "vpn.example.com",
+	})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "Listen Port") {
+		t.Fatalf("host-only ClientEndpoint without Listen Port returned %v", err)
+	}
+}
+
 func TestPeerPublicKeyPathIsCanonicalURLSafeAndReversible(t *testing.T) {
 	publicKey := "//////////////////////////////////////////8="
 	path, err := EncodePeerPublicKeyPath(publicKey)

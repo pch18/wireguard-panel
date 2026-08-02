@@ -35,9 +35,44 @@ type TrafficPoint struct {
 	SendBytesPerSecond    float64   `json:"sendBytesPerSecond"`
 }
 
+type PeerRuntimeState struct {
+	PublicKey               string     `json:"publicKey"`
+	Available               bool       `json:"available"`
+	Active                  bool       `json:"active"`
+	CurrentEndpoint         string     `json:"currentEndpoint"`
+	LastHandshakeAt         *time.Time `json:"lastHandshakeAt,omitempty"`
+	ActiveDurationSeconds   int64      `json:"activeDurationSeconds"`
+	InactiveDurationSeconds int64      `json:"inactiveDurationSeconds"`
+}
+
+type InterfaceRuntimeState struct {
+	InterfaceID           string             `json:"interfaceID"`
+	InterfaceName         string             `json:"interfaceName"`
+	ConfigurationRevision string             `json:"configurationRevision"`
+	RuntimeControllable   bool               `json:"runtimeControllable"`
+	RuntimeStateAvailable bool               `json:"runtimeStateAvailable"`
+	Running               bool               `json:"running"`
+	CollectorAvailable    bool               `json:"collectorAvailable"`
+	Message               string             `json:"message,omitempty"`
+	SampledAt             *time.Time         `json:"sampledAt,omitempty"`
+	Peers                 []PeerRuntimeState `json:"peers"`
+}
+
+type PeerTrafficStatus struct {
+	PublicKey             string  `json:"publicKey"`
+	ReceivedBytes         uint64  `json:"receivedBytes"`
+	SentBytes             uint64  `json:"sentBytes"`
+	ReceiveBytesPerSecond float64 `json:"receiveBytesPerSecond"`
+	SendBytesPerSecond    float64 `json:"sendBytesPerSecond"`
+}
+
 type InterfaceTrafficEvent struct {
-	Kind             string                    `json:"kind"`
-	Status           InterfaceRuntimeStatus    `json:"status"`
-	InterfaceTraffic []TrafficPoint            `json:"interfaceTraffic"`
-	PeerTraffic      map[string][]TrafficPoint `json:"peerTraffic"`
+	Kind                  string                    `json:"kind"`
+	InterfaceID           string                    `json:"interfaceID"`
+	InterfaceName         string                    `json:"interfaceName"`
+	ConfigurationRevision string                    `json:"configurationRevision"`
+	SampledAt             *time.Time                `json:"sampledAt,omitempty"`
+	Peers                 []PeerTrafficStatus       `json:"peers"`
+	InterfaceTraffic      []TrafficPoint            `json:"interfaceTraffic"`
+	PeerTraffic           map[string][]TrafficPoint `json:"peerTraffic"`
 }

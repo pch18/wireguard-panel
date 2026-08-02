@@ -9,6 +9,9 @@ import {
   valuesToLines,
 } from "../src/features/wireguard/formUtils.ts";
 import {
+  wireGuardConfigFilename,
+} from "../src/features/wireguard/configFile.ts";
+import {
   isWireGuardKey,
   wireGuardKeyOnly,
 } from "../src/features/wireguard/keyUtils.ts";
@@ -59,4 +62,11 @@ test("WireGuard key validation accepts only canonical 32-byte Base64 keys", () =
 test("WireGuard key fields discard typed and pasted whitespace", () => {
   assert.equal(wireGuardKeyOnly("abc def"), "abcdef");
   assert.equal(wireGuardKeyOnly(" abc\tdef\n "), "abcdef");
+});
+
+test("downloaded WireGuard configs use safe conf filenames", () => {
+  assert.equal(wireGuardConfigFilename("源晨-macbook"), "源晨-macbook.conf");
+  assert.equal(wireGuardConfigFilename("wg0.conf"), "wg0.conf");
+  assert.equal(wireGuardConfigFilename(" Tokyo/VPN:* "), "Tokyo-VPN--.conf");
+  assert.equal(wireGuardConfigFilename("..."), "wireguard.conf");
 });

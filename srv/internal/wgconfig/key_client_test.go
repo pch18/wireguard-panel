@@ -150,6 +150,20 @@ func TestClientConfigPreviewKeepsRequiredAndOmitsOptionalMissingFields(t *testin
 	}
 }
 
+func TestClientConfigDoesNotInheritServerMTU(t *testing.T) {
+	mtu := 1420
+	_, client, err := buildClientConfig(
+		model.Interface{Filename: "wg0.conf", MTU: &mtu},
+		model.Peer{Name: "Client", PublicKey: testPublicKey(t)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(client), "MTU =") {
+		t.Fatalf("client configuration inherited the server MTU:\n%s", client)
+	}
+}
+
 func TestClientConfigUsesFirstAddressInsideNetworkPrefix(t *testing.T) {
 	_, ipv4, err := buildClientConfig(
 		model.Interface{Filename: "wg0.conf"},
@@ -171,6 +185,35 @@ func TestClientConfigUsesFirstAddressInsideNetworkPrefix(t *testing.T) {
 	}
 	if !strings.Contains(string(ipv6), "Address = fd70::1/64") {
 		t.Fatalf("IPv6 client did not use the first address in its CIDR:\n%s", ipv6)
+	}
+}
+
+func TestClientConfigUsesListenPortForHostOnlyEndpoint(t *testing.T) {
+	listenPort := uint16(51820)
+	for _, test := range []struct {
+		endpoint string
+		want     string
+	}{
+		{endpoint: "vpn.example.com", want: "Endpoint = vpn.example.com:51820"},
+		{endpoint: "192.0.2.10", want: "Endpoint = 192.0.2.10:51820"},
+		{endpoint: "2001:db8::10", want: "Endpoint = [2001:db8::10]:51820"},
+		{endpoint: "[2001:db8::10]", want: "Endpoint = [2001:db8::10]:51820"},
+		{endpoint: "vpn.example.com:20000", want: "Endpoint = vpn.example.com:20000"},
+	} {
+		_, client, err := buildClientConfig(
+			model.Interface{
+				Filename:       "wg0.conf",
+				ListenPort:     &listenPort,
+				ClientEndpoint: test.endpoint,
+			},
+			model.Peer{Name: "Client", PublicKey: testPublicKey(t)},
+		)
+		if err != nil {
+			t.Fatalf("ClientEndpoint %q returned %v", test.endpoint, err)
+		}
+		if !strings.Contains(string(client), test.want) {
+			t.Errorf("ClientEndpoint %q did not produce %q:\n%s", test.endpoint, test.want, client)
+		}
 	}
 }
 

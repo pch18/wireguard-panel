@@ -12,7 +12,7 @@ git config wireguard-panel.deployHost SERVER_IP
 git config wireguard-panel.deployUser root
 git config wireguard-panel.deployIdentity /absolute/path/to/ssh-private-key
 git config wireguard-panel.deploySshPort 22
-git config wireguard-panel.deployPanelPort 8080
+git config wireguard-panel.deployPanelPort 5555
 ```
 
 也可以临时使用同名大写环境变量，例如

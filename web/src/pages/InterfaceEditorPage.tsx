@@ -18,12 +18,11 @@ import {
   type ParsedCIDR,
 } from "../features/wireguard/ipAddress";
 import { peerDeletionNeedsRestart } from "../features/wireguard/runtimeDiff";
-import { isRuntimeObservationFresh } from "../features/wireguard/runtimeFreshness";
 import {
-  updatePeerRateWindow,
-  type PeerTrafficSample,
-  type PeerWindowedRate,
-} from "../features/wireguard/peerRateWindow";
+  mergeRuntimeState,
+  mergeRuntimeTraffic,
+} from "../features/wireguard/runtimeEvents";
+import { isRuntimeObservationFresh } from "../features/wireguard/runtimeFreshness";
 import { formatPeerHandshakeElapsed } from "../features/wireguard/peerHandshakeClock";
 import { sortPeerEntriesByFirstAllowedIP } from "../features/wireguard/peerDisplayOrder";
 import {
@@ -55,6 +54,7 @@ import {
   updateInterface,
   updatePeer,
   type InterfaceInput,
+  type InterfaceRuntimeState,
   type InterfaceRuntimeStatus,
   type InterfaceTrafficEvent,
   type IPPlan,
@@ -70,6 +70,7 @@ import { useToast } from "../ui/Toast";
 type ConfigPreview = {
   title: string;
   description: string;
+  filename: string;
   text: string;
 };
 
@@ -168,9 +169,6 @@ export default function InterfaceEditorPage() {
   const [importPending, setImportPending] = useState(false);
   const [restartRetry, setRestartRetry] = useState<RestartRetry | null>(null);
   const [actionMenu, setActionMenu] = useState<string | null>(null);
-  const [windowedRates, setWindowedRates] = useState<
-    Map<string, PeerWindowedRate>
-  >(new Map());
   const [interfaceTraffic, setInterfaceTraffic] = useState<TrafficPoint[]>([]);
   const [peerTraffic, setPeerTraffic] = useState(
     () => new Map<string, TrafficPoint[]>(),
@@ -180,9 +178,6 @@ export default function InterfaceEditorPage() {
   const runtimeRequestRef = useRef(0);
   const externalRevisionRef = useRef<string>();
   const inputModalOpenRef = useRef(false);
-  const peerTrafficHistoryRef = useRef(
-    new Map<string, PeerTrafficSample[]>(),
-  );
   const configIDRef = useRef<string>();
   const configRevisionRef = useRef<string>();
   configIDRef.current = config?.id;
@@ -370,6 +365,29 @@ export default function InterfaceEditorPage() {
     if (interfaceID === undefined || invalidID) return;
 
     const source = new EventSource(runtimeEventsURL(interfaceID));
+    const receiveStatus = (message: Event) => {
+      try {
+        const event = JSON.parse(
+          (message as MessageEvent<string>).data,
+        ) as InterfaceRuntimeState;
+        const revision = configRevisionRef.current;
+        if (
+          revision &&
+          event.configurationRevision &&
+          event.configurationRevision !== revision
+        ) {
+          void reloadExternalRevision(event.configurationRevision);
+          return;
+        }
+        runtimeRequestRef.current++;
+        setRuntime((current) => mergeRuntimeState(current, event));
+        const observedAt = Date.now();
+        setRuntimeObservedAt(observedAt);
+        setClockNow(observedAt);
+      } catch {
+        // EventSource reconnects automatically; retain the last valid state.
+      }
+    };
     const receiveTraffic = (message: Event) => {
       try {
         const event = JSON.parse(
@@ -378,14 +396,14 @@ export default function InterfaceEditorPage() {
         const revision = configRevisionRef.current;
         if (
           revision &&
-          event.status.configurationRevision &&
-          event.status.configurationRevision !== revision
+          event.configurationRevision &&
+          event.configurationRevision !== revision
         ) {
-          void reloadExternalRevision(event.status.configurationRevision);
+          void reloadExternalRevision(event.configurationRevision);
           return;
         }
         runtimeRequestRef.current++;
-        setRuntime(event.status);
+        setRuntime((current) => mergeRuntimeTraffic(current, event));
         const observedAt = Date.now();
         setRuntimeObservedAt(observedAt);
         setClockNow(observedAt);
@@ -400,9 +418,11 @@ export default function InterfaceEditorPage() {
         // EventSource reconnects automatically; retain the last valid sample.
       }
     };
+    source.addEventListener("status", receiveStatus);
     source.addEventListener("traffic", receiveTraffic);
     return () => {
       runtimeRequestRef.current++;
+      source.removeEventListener("status", receiveStatus);
       source.removeEventListener("traffic", receiveTraffic);
       source.close();
     };
@@ -473,14 +493,11 @@ export default function InterfaceEditorPage() {
 
     return currentRuntime.peers.reduce(
       (summary, peer) => {
-        const rate = windowedRates.get(peer.publicKey);
         summary.activePeers += peer.available && peer.active ? 1 : 0;
         summary.receivedBytes += peer.receivedBytes;
         summary.sentBytes += peer.sentBytes;
-        summary.receiveBytesPerSecond +=
-          rate?.receiveBytesPerSecond ?? peer.receiveBytesPerSecond;
-        summary.sendBytesPerSecond +=
-          rate?.sendBytesPerSecond ?? peer.sendBytesPerSecond;
+        summary.receiveBytesPerSecond += peer.receiveBytesPerSecond;
+        summary.sendBytesPerSecond += peer.sendBytesPerSecond;
         return summary;
       },
       {
@@ -497,7 +514,6 @@ export default function InterfaceEditorPage() {
     config?.peers.length,
     currentRuntime,
     runtimeMetricsAvailable,
-    windowedRates,
   ]);
   const onlinePeerCount = interfaceRuntimeSummary.available
     ? interfaceRuntimeSummary.activePeers
@@ -506,53 +522,6 @@ export default function InterfaceEditorPage() {
     onlinePeerCount === undefined
       ? undefined
       : Math.max(0, interfaceRuntimeSummary.totalPeers - onlinePeerCount);
-
-  useEffect(() => {
-    peerTrafficHistoryRef.current.clear();
-    setWindowedRates(new Map());
-  }, [interfaceID]);
-
-  useEffect(() => {
-    const sampledAt = Date.parse(currentRuntime?.sampledAt ?? "");
-    if (!currentRuntime?.collectorAvailable || !Number.isFinite(sampledAt)) {
-      setWindowedRates(new Map());
-      return;
-    }
-
-    const activeKeys = new Set<string>();
-    const nextRates = new Map<string, PeerWindowedRate>();
-    for (const status of currentRuntime.peers) {
-      activeKeys.add(status.publicKey);
-      const fallback = {
-        receiveBytesPerSecond: status.receiveBytesPerSecond,
-        sendBytesPerSecond: status.sendBytesPerSecond,
-      };
-      if (!status.available) {
-        nextRates.set(status.publicKey, fallback);
-        continue;
-      }
-      const result = updatePeerRateWindow(
-        peerTrafficHistoryRef.current.get(status.publicKey) ?? [],
-        {
-          sampledAt,
-          receivedBytes: status.receivedBytes,
-          sentBytes: status.sentBytes,
-        },
-        fallback,
-      );
-      peerTrafficHistoryRef.current.set(status.publicKey, result.samples);
-      nextRates.set(status.publicKey, {
-        receiveBytesPerSecond: result.receiveBytesPerSecond,
-        sendBytesPerSecond: result.sendBytesPerSecond,
-      });
-    }
-    for (const publicKey of peerTrafficHistoryRef.current.keys()) {
-      if (!activeKeys.has(publicKey)) {
-        peerTrafficHistoryRef.current.delete(publicKey);
-      }
-    }
-    setWindowedRates(nextRates);
-  }, [currentRuntime]);
 
   const handleRevisionConflict = async (
     error: unknown,
@@ -929,6 +898,7 @@ export default function InterfaceEditorPage() {
       setConfigPreview({
         title: `导出 ${config?.filename ?? `${interfaceID}.conf`}`,
         description: "",
+        filename: config?.filename ?? `${interfaceID}.conf`,
         text,
       });
       dismissToast(toastID);
@@ -950,6 +920,7 @@ export default function InterfaceEditorPage() {
       setConfigPreview({
         title: `客户端配置：${peer.name}`,
         description: "必填字段即使缺值也会保留；空的可选字段不会输出。",
+        filename: peer.name,
         text,
       });
       dismissToast(toastID);
@@ -1463,7 +1434,7 @@ export default function InterfaceEditorPage() {
                 const peerValidationErrors =
                   scopedValidationErrors.peerErrors[peerIndex] ?? [];
                 const available = runtimeMetricsAvailable && status?.available;
-                const rate = windowedRates.get(peer.publicKey) ?? {
+                const rate = {
                   receiveBytesPerSecond:
                     status?.receiveBytesPerSecond ?? 0,
                   sendBytesPerSecond: status?.sendBytesPerSecond ?? 0,
@@ -1756,6 +1727,7 @@ export default function InterfaceEditorPage() {
               points={peerTraffic.get(trafficPeer.publicKey) ?? []}
               nowMs={clockNow}
               currentRateAvailable={runtimeMetricsAvailable}
+              showHorizontalAxis={false}
             />
           </div>
           <footer className="modal-actions">
@@ -1776,6 +1748,7 @@ export default function InterfaceEditorPage() {
           description={configPreview.description}
           mode="preview"
           value={configPreview.text}
+          downloadName={configPreview.filename}
           onClose={() => setConfigPreview(null)}
         />
       )}

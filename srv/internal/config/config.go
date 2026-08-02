@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	defaultPort               = "8080"
+	defaultPort               = "5555"
 	defaultWireGuardDirectory = "/etc/wireguard"
 	defaultAuthenticationFile = "/etc/wireguard-panel/auth.json"
 	TunnelModeSystem          = "system"

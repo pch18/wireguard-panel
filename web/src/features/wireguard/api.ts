@@ -158,9 +158,40 @@ export type TrafficPoint = {
   sendBytesPerSecond: number;
 };
 
+export type PeerRuntimeState = Pick<
+  PeerRuntimeStatus,
+  | "publicKey"
+  | "available"
+  | "active"
+  | "currentEndpoint"
+  | "lastHandshakeAt"
+  | "activeDurationSeconds"
+  | "inactiveDurationSeconds"
+>;
+
+export type InterfaceRuntimeState = Omit<
+  InterfaceRuntimeStatus,
+  "peers"
+> & {
+  peers: PeerRuntimeState[];
+};
+
+export type PeerTrafficStatus = Pick<
+  PeerRuntimeStatus,
+  | "publicKey"
+  | "receivedBytes"
+  | "sentBytes"
+  | "receiveBytesPerSecond"
+  | "sendBytesPerSecond"
+>;
+
 export type InterfaceTrafficEvent = {
   kind: "history" | "update";
-  status: InterfaceRuntimeStatus;
+  interfaceID: string;
+  interfaceName: string;
+  configurationRevision: string;
+  sampledAt?: string;
+  peers: PeerTrafficStatus[];
   interfaceTraffic: TrafficPoint[];
   peerTraffic: Record<string, TrafficPoint[]>;
 };

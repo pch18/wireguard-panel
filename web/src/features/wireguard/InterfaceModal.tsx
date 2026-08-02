@@ -396,7 +396,7 @@ export default function InterfaceModal({
               <input
                 id="client-endpoint"
                 value={input.clientEndpoint}
-                placeholder="vpn.example.com:51820"
+                placeholder="vpn.example.com 或 vpn.example.com:51820"
                 onChange={(event) =>
                   setInput((current) => ({
                     ...current,

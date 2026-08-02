@@ -4034,6 +4034,7 @@ svg {
 }
 
 .peer-runtime-dot {
+  position: relative;
   width: 0.62rem;
   height: 0.62rem;
   border-radius: 50%;
@@ -4047,6 +4048,21 @@ svg {
   box-shadow: 0 0 0 4px rgb(35 168 117 / 14%);
 }
 
+.peer-runtime-dot.is-active::after,
+.peer-runtime-dot.is-offline::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  animation: peer-status-halo 1.8s ease-out infinite;
+}
+
+.peer-runtime-dot.is-active::after {
+  border: 1px solid rgb(35 168 117 / 72%);
+  box-shadow: 0 0 0.42rem rgb(35 168 117 / 34%);
+}
+
 .peer-runtime-dot.is-inactive,
 .runtime-banner.is-inactive .status-dot {
   background: #d18a35;
@@ -4056,6 +4072,24 @@ svg {
 .peer-runtime-dot.is-offline {
   background: #d94b4b;
   box-shadow: 0 0 0 4px rgb(217 75 75 / 14%);
+}
+
+.peer-runtime-dot.is-offline::after {
+  border: 1px solid rgb(217 75 75 / 72%);
+  box-shadow: 0 0 0.42rem rgb(217 75 75 / 34%);
+}
+
+@keyframes peer-status-halo {
+  0% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+
+  72%,
+  100% {
+    opacity: 0;
+    transform: scale(2.9);
+  }
 }
 
 .modal.is-status {
@@ -4771,6 +4805,36 @@ svg {
   cursor: crosshair;
 }
 
+.traffic-chart-plot {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 4.3rem minmax(0, 1fr);
+  gap: 0.3rem;
+}
+
+.traffic-chart-y-axis {
+  position: relative;
+  min-width: 0;
+  height: 9.4rem;
+  color: var(--faint);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.traffic-chart-y-axis span {
+  position: absolute;
+  right: 0;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
 .traffic-chart-empty {
   position: absolute;
   z-index: 1;
@@ -4853,6 +4917,16 @@ svg {
   transform: translateX(-100%);
 }
 
+.traffic-chart-tooltip.is-detached {
+  position: fixed;
+  z-index: 150;
+  top: auto;
+  box-sizing: border-box;
+  width: 11rem;
+  max-width: calc(100vw - 1rem);
+  transform: none;
+}
+
 .traffic-chart-tooltip time {
   color: #dce5eb;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -4871,6 +4945,7 @@ svg {
   display: flex;
   justify-content: space-between;
   margin-top: 0.18rem;
+  margin-left: 4.6rem;
   color: var(--faint);
   font-size: 0.625rem;
 }
@@ -4893,6 +4968,16 @@ svg {
 
 .traffic-chart.is-compact .traffic-chart-canvas {
   min-height: 3.25rem;
+}
+
+.traffic-chart.is-compact .traffic-chart-plot {
+  grid-template-columns: 2.7rem minmax(0, 1fr);
+  gap: 0.18rem;
+}
+
+.traffic-chart.is-compact .traffic-chart-y-axis {
+  height: 3.25rem;
+  font-size: 0.625rem;
 }
 
 .traffic-chart.is-compact svg {
@@ -5110,6 +5195,14 @@ svg {
   box-shadow: 0 0 0 3px rgb(170 179 187 / 14%);
 }
 
+.peer-card-name .peer-runtime-dot.is-active {
+  box-shadow: 0 0 0 3px rgb(35 168 117 / 16%);
+}
+
+.peer-card-name .peer-runtime-dot.is-offline {
+  box-shadow: 0 0 0 3px rgb(217 75 75 / 16%);
+}
+
 .peer-card-name h3 {
   overflow: hidden;
   min-width: 0;
@@ -5139,10 +5232,12 @@ svg {
 }
 
 .peer-card-handshake svg {
+  display: block;
   width: 0.76rem;
   height: 0.76rem;
   flex: none;
   stroke-width: 2;
+  transform: translateY(0.04rem);
 }
 
 .peer-card-handshake-time {

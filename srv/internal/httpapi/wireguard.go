@@ -562,7 +562,23 @@ func (handler *wireGuardHandler) runtimeEvents(context *gin.Context) {
 	defer unsubscribe()
 
 	lastSentAt := time.Time{}
-	send := func(kind string, after time.Time) bool {
+	loadStatus := func() (model.InterfaceRuntimeStatus, bool) {
+		config, err := handler.configs.GetSettled(id)
+		if err != nil {
+			return model.InterfaceRuntimeStatus{}, false
+		}
+		return handler.runtimeStatusSnapshot(context.Request.Context(), config), true
+	}
+	sendStatus := func() bool {
+		status, ok := loadStatus()
+		if !ok {
+			return false
+		}
+		context.SSEvent("status", runtimeStateEvent(status))
+		context.Writer.Flush()
+		return true
+	}
+	sendTraffic := func(kind string, after time.Time) bool {
 		config, err := handler.configs.GetSettled(id)
 		if err != nil {
 			return false
@@ -578,19 +594,25 @@ func (handler *wireGuardHandler) runtimeEvents(context *gin.Context) {
 			publicKeys,
 		)
 		context.SSEvent("traffic", model.InterfaceTrafficEvent{
-			Kind:             kind,
-			Status:           status,
-			InterfaceTraffic: interfaceTraffic,
-			PeerTraffic:      peerTraffic,
+			Kind:                  kind,
+			InterfaceID:           status.InterfaceID,
+			InterfaceName:         status.InterfaceName,
+			ConfigurationRevision: status.ConfigurationRevision,
+			SampledAt:             status.SampledAt,
+			Peers:                 peerTrafficStatuses(status.Peers),
+			InterfaceTraffic:      interfaceTraffic,
+			PeerTraffic:           peerTraffic,
 		})
 		context.Writer.Flush()
-		if status.SampledAt != nil && status.SampledAt.After(lastSentAt) {
-			lastSentAt = *status.SampledAt
+		for _, point := range interfaceTraffic {
+			if point.SampledAt.After(lastSentAt) {
+				lastSentAt = point.SampledAt
+			}
 		}
 		return true
 	}
 
-	if !send("history", time.Time{}) {
+	if !sendStatus() || !sendTraffic("history", time.Time{}) {
 		return
 	}
 	for {
@@ -599,12 +621,57 @@ func (handler *wireGuardHandler) runtimeEvents(context *gin.Context) {
 			return
 		case <-handler.applicationContext.Done():
 			return
-		case <-updates:
-			if !send("update", lastSentAt) {
+		case <-updates.Status:
+			if !sendStatus() {
+				return
+			}
+		case <-updates.Traffic:
+			if !sendTraffic("update", lastSentAt) {
 				return
 			}
 		}
 	}
+}
+
+func runtimeStateEvent(status model.InterfaceRuntimeStatus) model.InterfaceRuntimeState {
+	peers := make([]model.PeerRuntimeState, 0, len(status.Peers))
+	for _, peer := range status.Peers {
+		peers = append(peers, model.PeerRuntimeState{
+			PublicKey:               peer.PublicKey,
+			Available:               peer.Available,
+			Active:                  peer.Active,
+			CurrentEndpoint:         peer.CurrentEndpoint,
+			LastHandshakeAt:         peer.LastHandshakeAt,
+			ActiveDurationSeconds:   peer.ActiveDurationSeconds,
+			InactiveDurationSeconds: peer.InactiveDurationSeconds,
+		})
+	}
+	return model.InterfaceRuntimeState{
+		InterfaceID:           status.InterfaceID,
+		InterfaceName:         status.InterfaceName,
+		ConfigurationRevision: status.ConfigurationRevision,
+		RuntimeControllable:   status.RuntimeControllable,
+		RuntimeStateAvailable: status.RuntimeStateAvailable,
+		Running:               status.Running,
+		CollectorAvailable:    status.CollectorAvailable,
+		Message:               status.Message,
+		SampledAt:             status.SampledAt,
+		Peers:                 peers,
+	}
+}
+
+func peerTrafficStatuses(peers []model.PeerRuntimeStatus) []model.PeerTrafficStatus {
+	statuses := make([]model.PeerTrafficStatus, 0, len(peers))
+	for _, peer := range peers {
+		statuses = append(statuses, model.PeerTrafficStatus{
+			PublicKey:             peer.PublicKey,
+			ReceivedBytes:         peer.ReceivedBytes,
+			SentBytes:             peer.SentBytes,
+			ReceiveBytesPerSecond: peer.ReceiveBytesPerSecond,
+			SendBytesPerSecond:    peer.SendBytesPerSecond,
+		})
+	}
+	return statuses
 }
 
 func (handler *wireGuardHandler) clientConfig(context *gin.Context) {

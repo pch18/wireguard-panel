@@ -1,12 +1,9 @@
 package wgstatus
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,45 +12,28 @@ import (
 )
 
 const (
-	sampleTimeout         = 3 * time.Second
-	DefaultSampleInterval = 3 * time.Second
-	DefaultHistoryWindow  = time.Hour
+	sampleTimeout          = 3 * time.Second
+	DefaultStatusInterval  = time.Second
+	DefaultTrafficInterval = 5 * time.Second
+	DefaultHistoryWindow   = time.Hour
 )
 
-type DumpRunner interface {
-	Dump(context.Context) ([]byte, error)
-}
-
-type ExecRunner struct {
-	Binary string
-}
-
-func (runner ExecRunner) Dump(ctx context.Context) ([]byte, error) {
-	binary := runner.Binary
-	if binary == "" {
-		binary = "wg"
-	}
-	output, err := exec.CommandContext(ctx, binary, "show", "all", "dump").Output()
-	if err != nil {
-		return nil, fmt.Errorf("run wg show all dump: %w", err)
-	}
-	return output, nil
-}
-
 type Collector struct {
-	mu            sync.RWMutex
-	runner        DumpRunner
-	activeWindow  time.Duration
-	historyWindow time.Duration
-	available     bool
-	message       string
-	sampledAt     time.Time
-	interfaces    map[string]dumpInterface
-	peers         map[string]*peerState
-	histories     map[string]*interfaceHistory
+	mu               sync.RWMutex
+	source           SnapshotSource
+	activeWindow     time.Duration
+	historyWindow    time.Duration
+	available        bool
+	message          string
+	sampledAt        time.Time
+	interfaces       map[string]struct{}
+	peers            map[string]*peerState
+	histories        map[string]*interfaceHistory
+	trafficBaselines map[string]trafficBaseline
+	lastTrafficAt    time.Time
 
 	subscribersMu    sync.Mutex
-	subscribers      map[uint64]chan struct{}
+	subscribers      map[uint64]*collectorSubscriber
 	nextSubscriberID uint64
 	clock            func() time.Time
 }
@@ -64,8 +44,6 @@ type interfaceHistory struct {
 }
 
 type peerState struct {
-	interfaceName string
-	publicKey     string
 	endpoint      string
 	lastHandshake time.Time
 	receivedBytes uint64
@@ -74,10 +52,25 @@ type peerState struct {
 	sendRate      float64
 	active        bool
 	stateSince    time.Time
+}
+
+type trafficBaseline struct {
+	receivedBytes uint64
+	sentBytes     uint64
 	sampledAt     time.Time
 }
 
-type dumpPeer struct {
+type collectorSubscriber struct {
+	status  chan struct{}
+	traffic chan struct{}
+}
+
+type Subscription struct {
+	Status  <-chan struct{}
+	Traffic <-chan struct{}
+}
+
+type peerSample struct {
 	interfaceName string
 	publicKey     string
 	endpoint      string
@@ -86,35 +79,34 @@ type dumpPeer struct {
 	sentBytes     uint64
 }
 
-type dumpInterface struct{}
-
 func NewCollector(
-	runner DumpRunner,
+	source SnapshotSource,
 	activeWindow time.Duration,
 ) *Collector {
 	if activeWindow <= 0 {
 		activeWindow = 3 * time.Minute
 	}
 	return &Collector{
-		runner:        runner,
-		activeWindow:  activeWindow,
-		historyWindow: DefaultHistoryWindow,
-		interfaces:    make(map[string]dumpInterface),
-		peers:         make(map[string]*peerState),
-		histories:     make(map[string]*interfaceHistory),
-		subscribers:   make(map[uint64]chan struct{}),
-		clock:         time.Now,
+		source:           source,
+		activeWindow:     activeWindow,
+		historyWindow:    DefaultHistoryWindow,
+		interfaces:       make(map[string]struct{}),
+		peers:            make(map[string]*peerState),
+		histories:        make(map[string]*interfaceHistory),
+		trafficBaselines: make(map[string]trafficBaseline),
+		subscribers:      make(map[uint64]*collectorSubscriber),
+		clock:            time.Now,
 	}
 }
 
 // Run is the sole periodic WireGuard sampling loop. HTTP status and SSE
 // handlers only read the in-memory snapshot populated here.
 func (collector *Collector) Run(ctx context.Context) {
-	if collector == nil || collector.runner == nil {
+	if collector == nil || collector.source == nil {
 		return
 	}
 	collector.sampleWithTimeout(ctx)
-	ticker := time.NewTicker(DefaultSampleInterval)
+	ticker := time.NewTicker(DefaultStatusInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -132,13 +124,13 @@ func (collector *Collector) sampleWithTimeout(parent context.Context) {
 	_ = collector.Sample(ctx, collector.now())
 }
 
-// InterfaceStatus only reads the latest background sample and never executes
-// wg itself.
+// InterfaceStatus only reads the latest background sample and never queries
+// the kernel itself.
 func (collector *Collector) InterfaceStatus(
 	_ context.Context,
 	config model.Interface,
 ) model.InterfaceRuntimeStatus {
-	if collector == nil || collector.runner == nil {
+	if collector == nil || collector.source == nil {
 		return unavailableInterface(config, "运行状态采集器未启用")
 	}
 	return collector.interfaceStatus(config, collector.now())
@@ -149,21 +141,33 @@ func (collector *Collector) now() time.Time {
 }
 
 func (collector *Collector) Sample(ctx context.Context, now time.Time) error {
-	if collector == nil || collector.runner == nil {
+	if collector == nil || collector.source == nil {
 		return fmt.Errorf("wg status collector is not configured")
 	}
-	output, err := collector.runner.Dump(ctx)
+	snapshot, err := collector.source.Snapshot(ctx)
 	if err != nil {
-		collector.markUnavailable(now, "无法读取 WireGuard 运行状态；请确认 wg 已安装且进程有权限访问网络接口")
+		collector.markUnavailable(now, "无法通过内核接口读取 WireGuard 运行状态；请确认进程有权限访问网络接口")
 		return err
 	}
-	interfaces, peers, err := parseDump(output)
-	if err != nil {
-		collector.markUnavailable(now, "wg 返回了无法解析的运行状态")
-		return err
+	interfaces := make(map[string]struct{}, len(snapshot.Devices))
+	peers := make([]peerSample, 0)
+	for _, device := range snapshot.Devices {
+		interfaces[device.Name] = struct{}{}
+		for _, peer := range device.Peers {
+			peers = append(peers, peerSample{
+				interfaceName: device.Name,
+				publicKey:     peer.PublicKey,
+				endpoint:      peer.Endpoint,
+				lastHandshake: peer.LastHandshake,
+				receivedBytes: peer.ReceivedBytes,
+				sentBytes:     peer.SentBytes,
+			})
+		}
 	}
 
 	collector.mu.Lock()
+	statusChanged := !collector.available || collector.message != "" ||
+		!sameInterfaceSet(collector.interfaces, interfaces)
 	collector.available = true
 	collector.message = ""
 	collector.sampledAt = now
@@ -172,34 +176,74 @@ func (collector *Collector) Sample(ctx context.Context, now time.Time) error {
 	for _, sample := range peers {
 		key := statusKey(sample.interfaceName, sample.publicKey)
 		seen[key] = struct{}{}
-		collector.ingestLocked(sample, now)
+		if collector.ingestLocked(sample, now) {
+			statusChanged = true
+		}
+		if _, ok := collector.trafficBaselines[key]; !ok {
+			collector.trafficBaselines[key] = trafficBaseline{
+				receivedBytes: sample.receivedBytes,
+				sentBytes:     sample.sentBytes,
+				sampledAt:     now,
+			}
+		}
 	}
-	collector.recordTrafficLocked(interfaces, peers, now)
 	for key := range collector.peers {
 		if _, ok := seen[key]; !ok {
 			delete(collector.peers, key)
+			delete(collector.trafficBaselines, key)
+			statusChanged = true
 		}
+	}
+	trafficDue := collector.trafficDueLocked(now)
+	if trafficDue {
+		collector.recordTrafficLocked(interfaces, peers, now)
 	}
 	collector.pruneHistoriesLocked(now.Add(-collector.historyWindow))
 	collector.mu.Unlock()
-	collector.notifySubscribers()
+	if statusChanged {
+		collector.notifyStatusSubscribers()
+	}
+	if trafficDue {
+		collector.notifyTrafficSubscribers()
+	}
 	return nil
 }
 
 func (collector *Collector) markUnavailable(now time.Time, message string) {
 	collector.mu.Lock()
+	statusChanged := collector.available || collector.message != message ||
+		len(collector.interfaces) != 0
 	collector.available = false
 	collector.message = message
 	collector.sampledAt = now
-	collector.interfaces = make(map[string]dumpInterface)
+	collector.interfaces = make(map[string]struct{})
+	collector.trafficBaselines = make(map[string]trafficBaseline)
+	trafficDue := collector.trafficDueLocked(now)
 	collector.pruneHistoriesLocked(now.Add(-collector.historyWindow))
 	collector.mu.Unlock()
-	collector.notifySubscribers()
+	if statusChanged {
+		collector.notifyStatusSubscribers()
+	}
+	if trafficDue {
+		collector.notifyTrafficSubscribers()
+	}
+}
+
+func (collector *Collector) trafficDueLocked(now time.Time) bool {
+	if collector.lastTrafficAt.IsZero() {
+		collector.lastTrafficAt = now
+		return false
+	}
+	if now.Sub(collector.lastTrafficAt) < DefaultTrafficInterval {
+		return false
+	}
+	collector.lastTrafficAt = now
+	return true
 }
 
 func (collector *Collector) recordTrafficLocked(
-	interfaces map[string]dumpInterface,
-	peers []dumpPeer,
+	interfaces map[string]struct{},
+	peers []peerSample,
 	now time.Time,
 ) {
 	interfacePoints := make(map[string]model.TrafficPoint, len(interfaces))
@@ -212,6 +256,24 @@ func (collector *Collector) recordTrafficLocked(
 		state := collector.peers[statusKey(sample.interfaceName, sample.publicKey)]
 		if state == nil {
 			continue
+		}
+		key := statusKey(sample.interfaceName, sample.publicKey)
+		baseline, baselineAvailable := collector.trafficBaselines[key]
+		state.receiveRate = 0
+		state.sendRate = 0
+		if baselineAvailable {
+			elapsed := now.Sub(baseline.sampledAt).Seconds()
+			if elapsed > 0 && sample.receivedBytes >= baseline.receivedBytes {
+				state.receiveRate = float64(sample.receivedBytes-baseline.receivedBytes) / elapsed
+			}
+			if elapsed > 0 && sample.sentBytes >= baseline.sentBytes {
+				state.sendRate = float64(sample.sentBytes-baseline.sentBytes) / elapsed
+			}
+		}
+		collector.trafficBaselines[key] = trafficBaseline{
+			receivedBytes: sample.receivedBytes,
+			sentBytes:     sample.sentBytes,
+			sampledAt:     now,
 		}
 		point := model.TrafficPoint{
 			SampledAt:             now,
@@ -332,24 +394,30 @@ func trafficPointsAfter(points []model.TrafficPoint, after time.Time) []model.Tr
 	return append([]model.TrafficPoint{}, points[first:]...)
 }
 
-func (collector *Collector) Subscribe() (<-chan struct{}, func()) {
+func (collector *Collector) Subscribe() (Subscription, func()) {
 	if collector == nil {
-		return nil, func() {}
+		return Subscription{}, func() {}
 	}
 	collector.subscribersMu.Lock()
 	collector.nextSubscriberID++
 	id := collector.nextSubscriberID
-	updates := make(chan struct{}, 1)
-	collector.subscribers[id] = updates
-	collector.subscribersMu.Unlock()
-	return updates, func() {
-		collector.subscribersMu.Lock()
-		delete(collector.subscribers, id)
-		collector.subscribersMu.Unlock()
+	subscriber := &collectorSubscriber{
+		status:  make(chan struct{}, 1),
+		traffic: make(chan struct{}, 1),
 	}
+	collector.subscribers[id] = subscriber
+	collector.subscribersMu.Unlock()
+	return Subscription{
+			Status:  subscriber.status,
+			Traffic: subscriber.traffic,
+		}, func() {
+			collector.subscribersMu.Lock()
+			delete(collector.subscribers, id)
+			collector.subscribersMu.Unlock()
+		}
 }
 
-func (collector *Collector) notifySubscribers() {
+func (collector *Collector) notifyStatusSubscribers() {
 	if collector == nil {
 		return
 	}
@@ -357,7 +425,21 @@ func (collector *Collector) notifySubscribers() {
 	defer collector.subscribersMu.Unlock()
 	for _, subscriber := range collector.subscribers {
 		select {
-		case subscriber <- struct{}{}:
+		case subscriber.status <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (collector *Collector) notifyTrafficSubscribers() {
+	if collector == nil {
+		return
+	}
+	collector.subscribersMu.Lock()
+	defer collector.subscribersMu.Unlock()
+	for _, subscriber := range collector.subscribers {
+		select {
+		case subscriber.traffic <- struct{}{}:
 		default:
 		}
 	}
@@ -447,35 +529,24 @@ func statusFromState(
 	return status
 }
 
-func (collector *Collector) ingestLocked(sample dumpPeer, now time.Time) {
+func (collector *Collector) ingestLocked(sample peerSample, now time.Time) bool {
 	key := statusKey(sample.interfaceName, sample.publicKey)
 	state := collector.peers[key]
+	endpoint := sample.endpoint
 	active := !sample.lastHandshake.IsZero() &&
 		now.Sub(sample.lastHandshake) >= 0 &&
 		now.Sub(sample.lastHandshake) <= collector.activeWindow
+	changed := state == nil
 	if state == nil {
 		state = &peerState{
-			interfaceName: sample.interfaceName,
-			publicKey:     sample.publicKey,
-			active:        active,
-			sampledAt:     now,
-			stateSince:    stateStart(sample.lastHandshake, now, active, collector.activeWindow),
+			active:     active,
+			stateSince: stateStart(sample.lastHandshake, now, active, collector.activeWindow),
 		}
 		collector.peers[key] = state
 	} else {
-		elapsed := now.Sub(state.sampledAt).Seconds()
-		var receivedDelta uint64
-		var sentDelta uint64
-		if sample.receivedBytes >= state.receivedBytes {
-			receivedDelta = sample.receivedBytes - state.receivedBytes
-		}
-		if sample.sentBytes >= state.sentBytes {
-			sentDelta = sample.sentBytes - state.sentBytes
-		}
-		if elapsed > 0 {
-			state.receiveRate = float64(receivedDelta) / elapsed
-			state.sendRate = float64(sentDelta) / elapsed
-		}
+		changed = state.endpoint != endpoint ||
+			!state.lastHandshake.Equal(sample.lastHandshake) ||
+			state.active != active
 		if state.active != active {
 			state.active = active
 			state.stateSince = stateStart(
@@ -486,11 +557,11 @@ func (collector *Collector) ingestLocked(sample dumpPeer, now time.Time) {
 			)
 		}
 	}
-	state.endpoint = noneToEmpty(sample.endpoint)
+	state.endpoint = endpoint
 	state.lastHandshake = sample.lastHandshake
 	state.receivedBytes = sample.receivedBytes
 	state.sentBytes = sample.sentBytes
-	state.sampledAt = now
+	return changed
 }
 
 func stateStart(
@@ -508,60 +579,16 @@ func stateStart(
 	return lastHandshake.Add(activeWindow)
 }
 
-func parseDump(output []byte) (map[string]dumpInterface, []dumpPeer, error) {
-	interfaces := make(map[string]dumpInterface)
-	peers := make([]dumpPeer, 0)
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := strings.TrimSuffix(scanner.Text(), "\r")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		switch len(fields) {
-		case 5:
-			interfaces[fields[0]] = dumpInterface{}
-		case 9:
-			handshakeUnix, err := strconv.ParseInt(fields[5], 10, 64)
-			if err != nil {
-				return nil, nil, fmt.Errorf("parse latest handshake: %w", err)
-			}
-			received, err := strconv.ParseUint(fields[6], 10, 64)
-			if err != nil {
-				return nil, nil, fmt.Errorf("parse received bytes: %w", err)
-			}
-			sent, err := strconv.ParseUint(fields[7], 10, 64)
-			if err != nil {
-				return nil, nil, fmt.Errorf("parse sent bytes: %w", err)
-			}
-			var handshake time.Time
-			if handshakeUnix > 0 {
-				handshake = time.Unix(handshakeUnix, 0).UTC()
-			}
-			peers = append(peers, dumpPeer{
-				interfaceName: fields[0],
-				publicKey:     fields[1],
-				endpoint:      fields[3],
-				lastHandshake: handshake,
-				receivedBytes: received,
-				sentBytes:     sent,
-			})
-			if !strings.EqualFold(fields[8], "off") {
-				if _, err := strconv.ParseUint(fields[8], 10, 16); err != nil {
-					return nil, nil, fmt.Errorf("parse persistent keepalive: %w", err)
-				}
-			}
-		default:
-			return nil, nil, fmt.Errorf(
-				"unexpected wg dump field count %d",
-				len(fields),
-			)
+func sameInterfaceSet(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for name := range left {
+		if _, ok := right[name]; !ok {
+			return false
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scan wg dump: %w", err)
-	}
-	return interfaces, peers, nil
+	return true
 }
 
 func unavailableInterface(config model.Interface, message string) model.InterfaceRuntimeStatus {
@@ -586,11 +613,4 @@ func unavailablePeer(peer model.Peer) model.PeerRuntimeStatus {
 
 func statusKey(interfaceName string, publicKey string) string {
 	return interfaceName + "\x00" + publicKey
-}
-
-func noneToEmpty(value string) string {
-	if value == "(none)" {
-		return ""
-	}
-	return value
 }

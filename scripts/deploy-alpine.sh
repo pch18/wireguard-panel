@@ -17,7 +17,7 @@ panel_port="${WIREGUARD_PANEL_DEPLOY_PANEL_PORT:-$(git_setting wireguard-panel.d
 
 deploy_user="${deploy_user:-root}"
 deploy_ssh_port="${deploy_ssh_port:-22}"
-panel_port="${panel_port:-8080}"
+panel_port="${panel_port:-5555}"
 
 [ -n "$deploy_host" ] || {
   printf 'Missing deployment host. Set WIREGUARD_PANEL_DEPLOY_HOST or git config wireguard-panel.deployHost.\n' >&2

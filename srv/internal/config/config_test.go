@@ -12,7 +12,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Port != "8080" {
+	if cfg.Port != "5555" {
 		t.Fatalf("unexpected defaults: %#v", cfg)
 	}
 	if cfg.TunnelMode != TunnelModeSystem {

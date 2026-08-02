@@ -45,10 +45,7 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer stopSignals()
-	statusCollector := wgstatus.NewCollector(
-		wgstatus.ExecRunner{Binary: "wg"},
-		3*time.Minute,
-	)
+	var statusCollector *wgstatus.Collector
 	execTunnelController := wgconfig.ExecTunnelController{
 		ConfigDirectory: cfg.WireGuardDirectory,
 	}
@@ -61,6 +58,16 @@ func main() {
 		if err := execTunnelController.ValidateEnvironment(); err != nil {
 			log.Fatal(err)
 		}
+		statusSource, err := wgstatus.NewWGCtrlSource()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func() {
+			if err := statusSource.Close(); err != nil {
+				log.Printf("close WireGuard control client: %v", err)
+			}
+		}()
+		statusCollector = wgstatus.NewCollector(statusSource, 3*time.Minute)
 		go statusCollector.Run(shutdownSignal)
 	}
 	router, err := httpapi.NewRouter(httpapi.Dependencies{

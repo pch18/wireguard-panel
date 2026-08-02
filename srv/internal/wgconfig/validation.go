@@ -53,7 +53,7 @@ func NormalizeInterface(input model.InterfaceInput) (model.InterfaceInput, error
 		}
 	}
 	if input.ClientEndpoint != "" {
-		if err := validateEndpoint("ClientEndpoint", input.ClientEndpoint); err != nil {
+		if err := validateClientEndpoint(input.ClientEndpoint, input.ListenPort); err != nil {
 			return model.InterfaceInput{}, err
 		}
 	}
@@ -241,6 +241,35 @@ func validateEndpoint(field string, value string) error {
 		return invalid("%s 端口必须在 1 到 65535 之间", field)
 	}
 	return nil
+}
+
+func validateClientEndpoint(value string, listenPort *uint16) error {
+	if validateEndpoint("ClientEndpoint", value) == nil {
+		return nil
+	}
+	if !isEndpointHost(value) {
+		return invalid(
+			"ClientEndpoint 必须使用 host、host:port、IPv6 或 [IPv6]:port 格式",
+		)
+	}
+	if listenPort == nil || *listenPort == 0 {
+		return invalid("ClientEndpoint 未填写端口时，Listen Port 不能为空")
+	}
+	return nil
+}
+
+func isEndpointHost(value string) bool {
+	if value == "" || strings.ContainsAny(value, " \t\r\n,") {
+		return false
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		_, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"))
+		return err == nil
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return true
+	}
+	return !strings.Contains(value, ":")
 }
 
 func invalid(format string, values ...any) error {

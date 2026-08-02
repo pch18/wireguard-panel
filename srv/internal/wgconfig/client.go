@@ -2,6 +2,7 @@ package wgconfig
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -55,9 +56,6 @@ func buildClientConfig(
 	output.WriteString("[Interface]\n")
 	writeRequiredClientField(&output, "PrivateKey", peer.PrivateKey)
 	writeField(&output, "Address", address)
-	if config.MTU != nil {
-		writeField(&output, "MTU", strconv.Itoa(*config.MTU))
-	}
 	output.WriteString("\n[Peer]\n")
 	writeRequiredClientField(&output, "PublicKey", serverPublicKey)
 	writeField(&output, "PresharedKey", peer.PresharedKey)
@@ -66,7 +64,7 @@ func buildClientConfig(
 		"AllowedIPs",
 		strings.Join(config.ClientAllowedIPs, ", "),
 	)
-	writeField(&output, "Endpoint", config.ClientEndpoint)
+	writeField(&output, "Endpoint", clientEndpointWithDefaultPort(config))
 	writeField(&output, "PersistentKeepalive", "25")
 
 	name := unsafeFilenameCharacters.ReplaceAllString(peer.Name, "-")
@@ -78,6 +76,18 @@ func buildClientConfig(
 	return fmt.Sprintf("%s-%s.conf", strings.TrimSuffix(config.Filename, ".conf"), name),
 		[]byte(output.String()),
 		nil
+}
+
+func clientEndpointWithDefaultPort(config model.Interface) string {
+	endpoint := strings.TrimSpace(config.ClientEndpoint)
+	if endpoint == "" || config.ListenPort == nil || *config.ListenPort == 0 {
+		return endpoint
+	}
+	if _, _, err := net.SplitHostPort(endpoint); err == nil {
+		return endpoint
+	}
+	host := strings.TrimSuffix(strings.TrimPrefix(endpoint, "["), "]")
+	return net.JoinHostPort(host, strconv.Itoa(int(*config.ListenPort)))
 }
 
 func firstAddressInPrefix(value string) string {

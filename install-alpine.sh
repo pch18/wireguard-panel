@@ -26,17 +26,51 @@ fail() {
 [ -f /etc/alpine-release ] || fail "only Alpine Linux is supported"
 [ "$(uname -m)" = "x86_64" ] || fail "only Linux AMD64 is supported"
 
-for command in curl sha256sum tar install cp mv rc-update rc-service; do
+for command in apk curl sha256sum tar install cp mv rc-update rc-service; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 
-for command in wg wg-quick ip; do
-  command -v "$command" >/dev/null 2>&1 || \
-    fail "$command is required (install wireguard-tools and iproute2 first)"
+missing_packages=""
+for package in wireguard-tools iproute2; do
+  if ! apk info -e "$package" >/dev/null 2>&1; then
+    missing_packages="${missing_packages} ${package}"
+  fi
+done
+if [ -n "$missing_packages" ]; then
+  printf 'Installing WireGuard dependencies...\n'
+  # Package names are selected from the fixed list above.
+  # shellcheck disable=SC2086
+  apk add --no-cache $missing_packages
+fi
+
+for command in wg wg-quick ip sysctl; do
+  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
+
+printf 'Enabling IP forwarding...\n'
+forwarding_config="/etc/sysctl.d/99-wireguard-panel-forwarding.conf"
+install -d -m 0755 /etc/sysctl.d
+{
+  printf '%s\n' 'net.ipv4.ip_forward = 1'
+  if [ -e /proc/sys/net/ipv6/conf/all/forwarding ]; then
+    printf '%s\n' 'net.ipv6.conf.all.forwarding = 1'
+  fi
+  if [ -e /proc/sys/net/ipv6/conf/default/forwarding ]; then
+    printf '%s\n' 'net.ipv6.conf.default.forwarding = 1'
+  fi
+} >"${temporary_directory}/wireguard-panel-forwarding.conf"
+install -m 0644 \
+  "${temporary_directory}/wireguard-panel-forwarding.conf" \
+  "$forwarding_config"
+if ! sysctl -p "$forwarding_config" >/dev/null; then
+  fail "IP forwarding could not be enabled"
+fi
+if ! rc-update add sysctl boot >/dev/null; then
+  fail "the sysctl service could not be enabled at boot"
+fi
 
 printf 'Downloading WireGuard Panel...\n'
 curl -fsSL "${release}/${asset}" -o "${temporary_directory}/${asset}"
@@ -69,14 +103,14 @@ if [ "$had_previous_service" = true ] && \
   had_previous_running=true
 fi
 
-panel_port=8080
+panel_port=5555
 if [ -r /etc/conf.d/wireguard-panel ]; then
   # OpenRC sources this root-owned file before starting the service. Source the
   # same file so the health check verifies the port the process actually uses.
   APP_PORT=""
   # shellcheck disable=SC1091
   . /etc/conf.d/wireguard-panel
-  panel_port="${APP_PORT:-8080}"
+  panel_port="${APP_PORT:-5555}"
 fi
 case "$panel_port" in
   ''|*[!0-9]*) fail "APP_PORT must be numeric" ;;

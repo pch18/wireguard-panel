@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -30,12 +31,21 @@ type stubMTUDetector struct {
 	err    error
 }
 
-type staticDumpRunner struct {
-	output []byte
+type staticSnapshotSource struct {
+	mu       sync.RWMutex
+	snapshot wgstatus.Snapshot
 }
 
-func (runner *staticDumpRunner) Dump(context.Context) ([]byte, error) {
-	return runner.output, nil
+func (source *staticSnapshotSource) Snapshot(context.Context) (wgstatus.Snapshot, error) {
+	source.mu.RLock()
+	defer source.mu.RUnlock()
+	return source.snapshot, nil
+}
+
+func (source *staticSnapshotSource) set(snapshot wgstatus.Snapshot) {
+	source.mu.Lock()
+	source.snapshot = snapshot
+	source.mu.Unlock()
 }
 
 type stubTunnelController struct{}
@@ -263,10 +273,8 @@ func TestInterfaceTrafficSSEStreamsHistoryAndBackgroundUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &staticDumpRunner{
-		output: []byte("Traffic\tprivate\tpublic\t51820\toff\n"),
-	}
-	collector := wgstatus.NewCollector(runner, 3*time.Minute)
+	source := &staticSnapshotSource{}
+	collector := wgstatus.NewCollector(source, 3*time.Minute)
 	webFiles := fstest.MapFS{
 		"web/index.html": &fstest.MapFile{Data: []byte("<main>app shell</main>")},
 	}
@@ -324,12 +332,23 @@ func TestInterfaceTrafficSSEStreamsHistoryAndBackgroundUpdates(t *testing.T) {
 		t.Fatalf("create Peer returned %d: %s", createdPeer.Code, createdPeer.Body.String())
 	}
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	runner.output = []byte(fmt.Sprintf(
-		"Traffic\tprivate\tpublic\t51820\toff\n"+
-			"Traffic\t%s\t(none)\t198.51.100.20:51820\t10.90.0.2/32\t0\t1000\t2000\t0\n",
-		peerPublicKey,
-	))
+	trafficSnapshot := func(endpoint string, received, sent uint64) wgstatus.Snapshot {
+		return wgstatus.Snapshot{Devices: []wgstatus.DeviceSnapshot{{
+			Name: "Traffic",
+			Peers: []wgstatus.PeerSnapshot{{
+				PublicKey:     peerPublicKey,
+				Endpoint:      endpoint,
+				ReceivedBytes: received,
+				SentBytes:     sent,
+			}},
+		}}}
+	}
+	source.set(trafficSnapshot("", 1000, 2000))
 	if err := collector.Sample(context.Background(), start); err != nil {
+		t.Fatal(err)
+	}
+	source.set(trafficSnapshot("", 1500, 2500))
+	if err := collector.Sample(context.Background(), start.Add(wgstatus.DefaultTrafficInterval)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -359,27 +378,42 @@ func TestInterfaceTrafficSSEStreamsHistoryAndBackgroundUpdates(t *testing.T) {
 	}
 
 	scanner := bufio.NewScanner(response.Body)
-	history := readTrafficEvent(t, scanner)
+	var initialState model.InterfaceRuntimeState
+	readSSEEvent(t, scanner, "status", &initialState)
+	if len(initialState.Peers) != 1 || initialState.Peers[0].CurrentEndpoint != "" {
+		t.Fatalf("unexpected initial status event: %#v", initialState)
+	}
+	var history model.InterfaceTrafficEvent
+	readSSEEvent(t, scanner, "traffic", &history)
 	if history.Kind != "history" ||
 		len(history.InterfaceTraffic) != 1 ||
-		len(history.Status.Peers) != 1 ||
+		len(history.Peers) != 1 ||
 		len(history.PeerTraffic[peerPublicKey]) != 1 {
 		t.Fatalf("unexpected initial traffic event: %#v", history)
 	}
-	runner.output = []byte(fmt.Sprintf(
-		"Traffic\tprivate\tpublic\t51820\toff\n"+
-			"Traffic\t%s\t(none)\t198.51.100.20:51820\t10.90.0.2/32\t0\t1600\t2600\t0\n",
-		peerPublicKey,
-	))
-	if err := collector.Sample(context.Background(), start.Add(3*time.Second)); err != nil {
+	source.set(trafficSnapshot("198.51.100.20:51820", 1600, 2600))
+	if err := collector.Sample(context.Background(), start.Add(6*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	update := readTrafficEvent(t, scanner)
+	var stateUpdate model.InterfaceRuntimeState
+	readSSEEvent(t, scanner, "status", &stateUpdate)
+	if len(stateUpdate.Peers) != 1 ||
+		stateUpdate.Peers[0].CurrentEndpoint != "198.51.100.20:51820" {
+		t.Fatalf("unexpected immediate status update: %#v", stateUpdate)
+	}
+
+	source.set(trafficSnapshot("198.51.100.20:51820", 2100, 3100))
+	if err := collector.Sample(context.Background(), start.Add(10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var update model.InterfaceTrafficEvent
+	readSSEEvent(t, scanner, "traffic", &update)
 	if update.Kind != "update" ||
 		len(update.InterfaceTraffic) != 1 ||
 		len(update.PeerTraffic[peerPublicKey]) != 1 ||
-		update.Status.Peers[0].ReceiveBytesPerSecond != 200 ||
-		update.Status.Peers[0].SendBytesPerSecond != 200 {
+		len(update.Peers) != 1 ||
+		update.Peers[0].ReceiveBytesPerSecond != 120 ||
+		update.Peers[0].SendBytesPerSecond != 120 {
 		t.Fatalf("unexpected traffic update: %#v", update)
 	}
 
@@ -400,24 +434,32 @@ func TestInterfaceTrafficSSEStreamsHistoryAndBackgroundUpdates(t *testing.T) {
 	}
 }
 
-func readTrafficEvent(
+func readSSEEvent(
 	t *testing.T,
 	scanner *bufio.Scanner,
-) model.InterfaceTrafficEvent {
+	eventName string,
+	target any,
+) {
 	t.Helper()
+	currentEvent := ""
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+		if strings.HasPrefix(line, "event:") {
+			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			continue
 		}
-		var event model.InterfaceTrafficEvent
-		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &event); err != nil {
+		if currentEvent != eventName || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		if err := json.Unmarshal(
+			[]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))),
+			target,
+		); err != nil {
 			t.Fatal(err)
 		}
-		return event
+		return
 	}
-	t.Fatalf("SSE stream ended before a traffic event: %v", scanner.Err())
-	return model.InterfaceTrafficEvent{}
+	t.Fatalf("SSE stream ended before a %s event: %v", eventName, scanner.Err())
 }
 
 func TestWireGuardInventoryReportsInvalidFilesWithoutFailingScan(t *testing.T) {

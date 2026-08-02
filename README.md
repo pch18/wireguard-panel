@@ -95,7 +95,8 @@ Interface 名称由 `.conf` 文件名推导，不再写入 `# Name` 注释。
 生成客户端配置时，`[Interface] Address` 直接使用该 Peer `AllowedIPs` 的第一项，
 `[Peer] Endpoint` 和 `[Peer] AllowedIPs` 使用 Interface 中配置的 Peer 默认参数，
 `PersistentKeepalive` 固定写为 `25`，并且不写入 DNS。Interface PublicKey 始终根据
-PrivateKey 实时计算，不写入配置文件。
+PrivateKey 实时计算，不写入配置文件。服务端 Interface 的 MTU 也不会写入客户端配置，
+由客户端用户根据自身网络环境决定。
 
 ## MTU 探测
 
@@ -159,11 +160,14 @@ Interface `ClientAllowedIPs` 是结构化地址选择器使用的路由范围约
 
 ## 运行状态
 
-服务只有一个 WireGuard 状态定时任务：每 3 秒执行一次 `wg show all dump`，一次采集
-同时覆盖所有 Interface 和 Peer。HTTP 状态查询只读取内存快照，不会额外执行 `wg`，
-也不会在后台比较配置文件与运行配置。面板自身不运行其他周期性后台任务。
-内存保留最近 1 小时的速率采样，页面通过当前 Interface 对应的一条 SSE 长连接先接收
-历史，再每 3 秒接收最新采样；折线图默认展示最近 30 分钟。数据用于展示：
+服务只有一个 WireGuard 状态定时任务：每秒通过一个长期复用的 `wgctrl.Client` 读取一次
+内核状态，一次采集同时覆盖所有 Interface 和 Peer，不再启动 `wg show` 子进程。HTTP 状态
+查询只读取内存快照，也不会在后台比较配置文件与运行配置。面板自身不运行其他周期性
+后台任务。
+Peer 状态与流量使用两类独立 SSE 事件：Endpoint、握手、在线状态或 Interface 运行状态
+发生变化后，在下一次 1 秒采集时立即推送；流量在后端按 5 秒窗口计算平均值并每 5 秒
+推送一次。内存保留最近 1 小时的 5 秒速率采样，建立连接时先发送完整历史；折线图默认
+展示最近 30 分钟。数据用于展示：
 
 - 最近握手时间和当前 Endpoint；
 - 累计接收/发送流量；
@@ -175,7 +179,7 @@ Interface `ClientAllowedIPs` 是结构化地址选择器使用的路由范围约
 “待同步”状态。显式停止、删除和重启均直接使用当时的原生配置文件；面板发起的重启会先
 完成配置解析、字段校验和 `wg-quick strip` 预检，预检失败时不会停止当前通道。
 
-进程刚启动后的第一个采样点没有前值，因此速度显示为零。
+进程刚启动后的第一个 5 秒窗口完成前没有可计算的速率点，因此速度显示为零。
 “活跃”表示最近 3 分钟内有过握手，是基于 WireGuard 数据的推断，不代表传统意义上的
 长连接在线状态。读取失败不会影响配置管理，页面会明确显示状态不可用。
 
@@ -184,7 +188,7 @@ Interface `ClientAllowedIPs` 是结构化地址选择器使用的路由范围约
 首次启动的默认账号密码为 `admin/admin5555`：
 
 ```bash
-APP_PORT=8080
+APP_PORT=5555
 ```
 
 初始用户名和密码固定为 `admin/admin5555`，只在认证文件不存在时使用。认证文件格式为：
@@ -210,9 +214,9 @@ SameSite 保护，但不会设置 Secure 属性。
 包含在二进制中，不需要额外的 Web 服务器或运行时。程序直接运行在 WireGuard 主机上：
 
 - 默认读取和写入 `/etc/wireguard`，也可显式指定其他绝对目录；
-- 通过主机上的 `wg` 命令读取运行状态；
+- 通过 `wgctrl.Client` 读取 WireGuard 内核运行状态；
 - 直接使用 raw ICMP 提供按需 MTU 探测，需要 root 或 `CAP_NET_RAW`；
-- 默认监听 `0.0.0.0:8080` 并提供 HTTP 页面和 API；
+- 默认监听 `0.0.0.0:5555` 并提供 HTTP 页面和 API；
 - 需要拥有读写 WireGuard 配置及读取运行状态的权限，安装服务默认以 root 运行；
 - 运行中 Interface 的结构化写操作会同步热更新；必须重建的字段会先二次确认，再自动
   调用 `wg-quick down/up`。停用 Interface 的写操作保持停用。运行中的 Interface 必须
@@ -227,8 +231,8 @@ SameSite 保护，但不会设置 Secure 属性。
 ## Alpine 一键安装
 
 Release 提供静态链接的 Linux AMD64 安装包及 SHA-256 校验文件。目标主机需要是
-使用 OpenRC 的 Alpine Linux AMD64，并已安装 `curl`、`wireguard-tools` 和 `iproute2`。以 root
-执行：
+使用 OpenRC 的 Alpine Linux AMD64，并已安装 `curl`；安装器会自动补齐
+`wireguard-tools` 和 `iproute2`。以 root 执行：
 
 ```bash
 curl -fsSL \
@@ -238,6 +242,9 @@ curl -fsSL \
 
 安装器会：
 
+- 安装缺失的 `wireguard-tools` 和 `iproute2`；
+- 立即启用 IPv4 转发，并在内核支持 IPv6 时同时启用 IPv6 转发；转发设置写入
+  `/etc/sysctl.d/99-wireguard-panel-forwarding.conf`，由 OpenRC 在启动时恢复；
 - 从 GitHub Latest Release 下载 `wireguard-panel_linux_amd64.tar.gz`；
 - 校验同名 `.sha256` 文件；
 - 安装二进制到 `/usr/local/bin/wireguard-panel`；
@@ -245,7 +252,7 @@ curl -fsSL \
 - 注册并启动 `wireguard-panel` OpenRC 服务；
 - 启动或回环健康检查失败时回滚上一版面板二进制、服务定义和启动状态，不重启
   WireGuard Interface；
-- 不创建系统账户或额外的安装配置文件。
+- 不创建系统账户，也不自动添加 NAT 或防火墙规则。
 
 服务首次启动后，程序自行创建权限为 `0700` 的 `/etc/wireguard-panel` 和权限为
 `0600` 的 `/etc/wireguard-panel/auth.json`。
@@ -257,7 +264,7 @@ curl -fsSL \
 
 ```sh
 printf '%s\n' \
-  "export APP_PORT='8080'" \
+  "export APP_PORT='5555'" \
   >/etc/conf.d/wireguard-panel
 chmod 0600 /etc/conf.d/wireguard-panel
 rc-service wireguard-panel restart
@@ -299,8 +306,8 @@ rc-service wireguard-panel restart
 
 ## 本地开发
 
-需要 Go 1.23+、Node.js 22+、pnpm 10；状态采集还需要 `wg` 命令。本地开发建议使用
-独立目录，避免接触系统真实配置：
+需要 Go 1.23+、Node.js 22+、pnpm 10。`system` 模式还需要 WireGuard 内核控制权限及
+`wireguard-tools`；下面的本地开发方式使用 `file-only`，不会读取或控制系统真实接口：
 
 ```bash
 mkdir -p /tmp/wireguard-panel-dev/wireguard
@@ -325,7 +332,7 @@ corepack pnpm dev
 ```
 
 打开 `http://localhost:5173`，Vite 会把 `/api` 代理到
-`http://localhost:8080`。
+`http://localhost:5555`。
 
 ## 构建与测试
 
