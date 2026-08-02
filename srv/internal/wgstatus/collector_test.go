@@ -119,6 +119,30 @@ func TestCollectorUsesBackgroundSamplesAndCalculatesRates(t *testing.T) {
 	}
 }
 
+func TestCollectorAcceptsDisabledPersistentKeepalive(t *testing.T) {
+	collector := NewCollector(&sequenceRunner{outputs: [][]byte{
+		[]byte(
+			"wg0\tprivate\tpublic\t51820\toff\n" +
+				"wg0\tpeer-public\t(none)\t(none)\t10.0.0.2/32\t0\t0\t0\toff\n",
+		),
+	}}, 3*time.Minute)
+	now := time.Date(2026, 8, 2, 13, 0, 0, 0, time.UTC)
+	collector.clock = func() time.Time { return now }
+	config := model.Interface{
+		ID:       "wg0",
+		Filename: "wg0.conf",
+		Peers:    []model.Peer{{PublicKey: "peer-public"}},
+	}
+
+	if err := collector.Sample(context.Background(), now); err != nil {
+		t.Fatalf("disabled PersistentKeepalive rejected: %v", err)
+	}
+	status := collector.InterfaceStatus(context.Background(), config)
+	if !status.CollectorAvailable || !status.Running || !status.Peers[0].Available {
+		t.Fatalf("disabled PersistentKeepalive made status unavailable: %#v", status)
+	}
+}
+
 type blockingRunner struct {
 	calls   atomic.Int32
 	started chan struct{}

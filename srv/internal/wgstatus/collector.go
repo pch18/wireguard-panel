@@ -546,8 +546,10 @@ func parseDump(output []byte) (map[string]dumpInterface, []dumpPeer, error) {
 				receivedBytes: received,
 				sentBytes:     sent,
 			})
-			if _, err := strconv.ParseUint(fields[8], 10, 16); err != nil {
-				return nil, nil, fmt.Errorf("parse persistent keepalive: %w", err)
+			if !strings.EqualFold(fields[8], "off") {
+				if _, err := strconv.ParseUint(fields[8], 10, 16); err != nil {
+					return nil, nil, fmt.Errorf("parse persistent keepalive: %w", err)
+				}
 			}
 		default:
 			return nil, nil, fmt.Errorf(
