@@ -3,18 +3,10 @@ package wgconfig
 import (
 	"fmt"
 	"net/netip"
-	"regexp"
 	"sort"
 
 	"wireguard-panel/internal/model"
 )
-
-var peerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-
-type assignedPrefix struct {
-	prefix netip.Prefix
-	peerID string
-}
 
 type ipNetworkState struct {
 	prefix             netip.Prefix
@@ -22,12 +14,15 @@ type ipNetworkState struct {
 	allocated          map[netip.Addr]bool
 }
 
-func validPeerID(id string) bool {
-	return peerIDPattern.MatchString(id)
+func validateIPAssignments(config model.Interface) error {
+	return validateIPAssignmentsWithoutRouteRange(config)
 }
 
-func validateIPAssignments(config model.Interface) error {
-	interfaceNetworks := make([]netip.Prefix, 0, len(config.Address))
+func validateIPAssignmentsForRead(config model.Interface) error {
+	return validateIPAssignmentsWithoutRouteRange(config)
+}
+
+func validateIPAssignmentsWithoutRouteRange(config model.Interface) error {
 	interfaceAddresses := make(map[netip.Addr]string)
 	for _, value := range config.Address {
 		prefix, err := netip.ParsePrefix(value)
@@ -44,66 +39,51 @@ func validateIPAssignments(config model.Interface) error {
 			)
 		}
 		interfaceAddresses[address] = value
-		interfaceNetworks = append(interfaceNetworks, normalizedPrefix(prefix))
 	}
-
-	clientAddresses := make(map[netip.Addr]string)
-	allowed := make([]assignedPrefix, 0)
+	assigned := make(map[string]string)
 	for _, peer := range config.Peers {
-		for _, value := range peer.ClientAddress {
-			prefix, _ := netip.ParsePrefix(value)
-			address := prefix.Addr().Unmap()
-			if interfaceValue, exists := interfaceAddresses[address]; exists {
-				return fmt.Errorf(
-					"%w: Peer %q 的 ClientAddress %s 与 Interface Address %s 冲突",
-					ErrConflict,
-					peer.Name,
-					value,
-					interfaceValue,
-				)
-			}
-			if previousPeer, exists := clientAddresses[address]; exists {
-				return fmt.Errorf(
-					"%w: Peer %q 与 Peer %q 使用了同一个 ClientAddress %s",
-					ErrConflict,
-					peer.Name,
-					previousPeer,
-					address,
-				)
-			}
-			if len(interfaceNetworks) > 0 &&
-				!addressInNetworks(address, interfaceNetworks) {
-				return fmt.Errorf(
-					"%w: Peer %q 的 ClientAddress %s 不属于任何 Interface Address 子网",
-					ErrConflict,
-					peer.Name,
-					value,
-				)
-			}
-			clientAddresses[address] = peer.Name
-		}
-
 		for _, value := range peer.AllowedIPs {
-			prefix, _ := netip.ParsePrefix(value)
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				continue
+			}
 			prefix = normalizedPrefix(prefix)
-			for _, previous := range allowed {
-				if previous.peerID != peer.ID && prefix.Overlaps(previous.prefix) {
+			for address, interfaceValue := range interfaceAddresses {
+				if isHostPrefix(prefix) && prefix.Addr().Unmap() == address {
 					return fmt.Errorf(
-						"%w: Peer %q 的 AllowedIPs %s 与另一个 Peer 的 %s 重叠",
+						"%w: Peer %q 的 AllowedIPs %s 与 Interface Address %s 重复",
 						ErrConflict,
 						peer.Name,
 						value,
-						previous.prefix,
+						interfaceValue,
 					)
 				}
 			}
-			allowed = append(allowed, assignedPrefix{prefix: prefix, peerID: peer.ID})
+			key := prefix.String()
+			if previousPeer, exists := assigned[key]; exists {
+				if previousPeer == peer.PublicKey {
+					return fmt.Errorf(
+						"%w: Peer %q 的 AllowedIPs %s 重复",
+						ErrConflict,
+						peer.Name,
+						value,
+					)
+				}
+				return fmt.Errorf(
+					"%w: Peer %q 的 AllowedIPs %s 与另一个 Peer 重复",
+					ErrConflict,
+					peer.Name,
+					value,
+				)
+			}
+			assigned[key] = peer.PublicKey
 		}
 	}
 	return nil
 }
 
 func BuildIPPlan(config model.Interface) model.IPPlan {
+	peerAllowedNetworks := normalizedPrefixes(config.ClientAllowedIPs)
 	states := make(map[string]*ipNetworkState)
 	order := make([]string, 0)
 	for _, value := range config.Address {
@@ -128,13 +108,6 @@ func BuildIPPlan(config model.Interface) model.IPPlan {
 	}
 
 	for _, peer := range config.Peers {
-		for _, value := range peer.ClientAddress {
-			prefix, err := netip.ParsePrefix(value)
-			if err != nil {
-				continue
-			}
-			addAddressToNetworks(prefix.Addr().Unmap(), states)
-		}
 		for _, value := range peer.AllowedIPs {
 			prefix, err := netip.ParsePrefix(value)
 			if err != nil || !isHostPrefix(prefix) {
@@ -145,8 +118,43 @@ func BuildIPPlan(config model.Interface) model.IPPlan {
 	}
 
 	plan := model.IPPlan{
-		Networks:  make([]model.IPNetworkPlan, 0, len(states)),
-		Conflicts: make([]model.IPConflict, 0),
+		Revision:          config.Revision,
+		Networks:          make([]model.IPNetworkPlan, 0, len(states)),
+		AllowedRanges:     make([]string, 0, len(peerAllowedNetworks)),
+		ReservedAddresses: make([]string, 0, len(config.Address)),
+		Assignments:       make([]model.IPAssignment, 0),
+		Conflicts:         make([]model.IPConflict, 0),
+	}
+	for _, network := range peerAllowedNetworks {
+		plan.AllowedRanges = append(plan.AllowedRanges, network.String())
+	}
+	for _, value := range config.Address {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			continue
+		}
+		address := prefix.Addr().Unmap()
+		bits := 128
+		if address.Is4() {
+			bits = 32
+		}
+		plan.ReservedAddresses = append(
+			plan.ReservedAddresses,
+			netip.PrefixFrom(address, bits).String(),
+		)
+	}
+	for _, peer := range config.Peers {
+		for _, value := range peer.AllowedIPs {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				continue
+			}
+			plan.Assignments = append(plan.Assignments, model.IPAssignment{
+				AllowedIP:     normalizedPrefix(prefix).String(),
+				PeerPublicKey: peer.PublicKey,
+				PeerName:      peer.Name,
+			})
+		}
 	}
 	for _, key := range order {
 		state := states[key]
@@ -190,14 +198,22 @@ func normalizedPrefix(prefix netip.Prefix) netip.Prefix {
 	return netip.PrefixFrom(address, bits).Masked()
 }
 
-func addressInNetworks(address netip.Addr, networks []netip.Prefix) bool {
-	address = address.Unmap()
-	for _, network := range networks {
-		if network.Contains(address) {
-			return true
+func normalizedPrefixes(values []string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(values))
+	seen := make(map[string]bool)
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			continue
+		}
+		prefix = normalizedPrefix(prefix)
+		key := prefix.String()
+		if !seen[key] {
+			seen[key] = true
+			prefixes = append(prefixes, prefix)
 		}
 	}
-	return false
+	return prefixes
 }
 
 func addAddressToNetworks(

@@ -5,6 +5,7 @@ export type IconName =
   | "alert"
   | "arrow-left"
   | "chevron-down"
+  | "clock"
   | "close"
   | "download"
   | "edit"
@@ -15,13 +16,17 @@ export type IconName =
   | "lock"
   | "logout"
   | "menu"
+  | "more-horizontal"
   | "network"
   | "plus"
+  | "power"
   | "refresh"
   | "settings"
   | "shield"
+  | "stop"
   | "terminal"
   | "trash"
+  | "upload"
   | "users"
   | "user";
 
@@ -36,6 +41,12 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   "arrow-left": <path d="m15 18-6-6 6-6" />,
   "chevron-down": <path d="m6 9 6 6 6-6" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
   close: (
     <>
       <path d="M18 6 6 18" />
@@ -104,6 +115,13 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="M4 18h16" />
     </>
   ),
+  "more-horizontal": (
+    <>
+      <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
   network: (
     <>
       <rect x="3" y="3" width="18" height="6" rx="2" />
@@ -115,6 +133,12 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </>
+  ),
+  power: (
+    <>
+      <path d="M12 2v10" />
+      <path d="M6.4 5.6a8 8 0 1 0 11.2 0" />
     </>
   ),
   refresh: (
@@ -137,6 +161,7 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="m9 12 2 2 4-4" />
     </>
   ),
+  stop: <rect x="5" y="5" width="14" height="14" rx="2" />,
   terminal: (
     <>
       <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -150,6 +175,13 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="M8 6V4h8v2" />
       <path d="m19 6-1 15H6L5 6" />
       <path d="M10 11v5M14 11v5" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 21V9" />
+      <path d="m7 14 5-5 5 5" />
+      <path d="M5 3h14" />
     </>
   ),
   users: (

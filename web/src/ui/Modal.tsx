@@ -8,6 +8,7 @@ type ModalProps = {
   onClose(): void;
   children: ReactNode;
   className?: string;
+  closeDisabled?: boolean;
 };
 
 export default function Modal({
@@ -17,12 +18,15 @@ export default function Modal({
   onClose,
   children,
   className = "",
+  closeDisabled = false,
 }: ModalProps) {
   const titleID = useId();
   const descriptionID = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const closeDisabledRef = useRef(closeDisabled);
   onCloseRef.current = onClose;
+  closeDisabledRef.current = closeDisabled;
 
   useEffect(() => {
     const previousFocus =
@@ -40,7 +44,7 @@ export default function Modal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCloseRef.current();
+        if (!closeDisabledRef.current) onCloseRef.current();
       }
       if (event.key !== "Tab" || !dialog) return;
       const focusable = Array.from(
@@ -72,7 +76,11 @@ export default function Modal({
       className="modal-backdrop"
       data-modal-variant={variant}
       onMouseDown={(event) => {
-        if (variant === "display" && event.target === event.currentTarget) {
+        if (
+          !closeDisabled &&
+          variant === "display" &&
+          event.target === event.currentTarget
+        ) {
           onClose();
         }
       }}
@@ -94,6 +102,7 @@ export default function Modal({
             className="icon-button"
             type="button"
             aria-label="关闭"
+            disabled={closeDisabled}
             onClick={onClose}
           >
             <Icon name="close" />

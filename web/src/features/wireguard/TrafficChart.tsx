@@ -1,62 +1,159 @@
 import type { TrafficPoint } from "./api";
 
-type TrafficChartProps = {
+type Props = {
   points: TrafficPoint[];
+  nowMs: number;
+  compact?: boolean;
+  windowMinutes?: number;
+  currentRateAvailable?: boolean;
 };
 
-const width = 720;
-const height = 210;
-const inset = 20;
+const width = 640;
+const overviewHeight = 150;
+const compactHeight = 72;
+const sampleGapMilliseconds = 7_500;
 
-function pathFor(
-  points: TrafficPoint[],
-  select: (point: TrafficPoint) => number,
+type ParsedPoint = TrafficPoint & { timestamp: number };
+
+export function formatBytes(value: number) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let result = Math.max(0, value);
+  let unit = 0;
+  while (result >= 1024 && unit < units.length - 1) {
+    result /= 1024;
+    unit++;
+  }
+  return `${result >= 10 || unit === 0 ? result.toFixed(0) : result.toFixed(1)} ${units[unit]}`;
+}
+
+export function formatRate(value: number) {
+  return `${formatBytes(value)}/s`;
+}
+
+function linePath(
+  points: ParsedPoint[],
+  select: (point: ParsedPoint) => number,
+  start: number,
+  end: number,
   ceiling: number,
+  height: number,
+  inset: number,
 ) {
-  if (points.length === 0) return "";
   return points
     .map((point, index) => {
       const x =
-        inset + (index / Math.max(1, points.length - 1)) * (width - inset * 2);
+        inset +
+        ((point.timestamp - start) / Math.max(1, end - start)) *
+          (width - inset * 2);
       const y =
-        height - inset - (select(point) / ceiling) * (height - inset * 2);
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+        height -
+        inset -
+        (select(point) / ceiling) * (height - inset * 2);
+      const previous = points[index - 1];
+      const command =
+        !previous || point.timestamp - previous.timestamp > sampleGapMilliseconds
+          ? "M"
+          : "L";
+      return `${command} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
 }
 
-export default function TrafficChart({ points }: TrafficChartProps) {
+export default function TrafficChart({
+  points,
+  nowMs,
+  compact = false,
+  windowMinutes = 30,
+  currentRateAvailable = true,
+}: Props) {
+  const windowMilliseconds = windowMinutes * 60_000;
+  const start = nowMs - windowMilliseconds;
+  const parsed = points
+    .map((point) => ({ ...point, timestamp: Date.parse(point.sampledAt) }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.timestamp) &&
+        point.timestamp >= start &&
+        point.timestamp <= nowMs + sampleGapMilliseconds,
+    );
+  const height = compact ? compactHeight : overviewHeight;
+  const inset = compact ? 5 : 12;
   const ceiling = Math.max(
     1,
-    ...points.flatMap((point) => [point.receivedBytes, point.sentBytes]),
+    ...parsed.flatMap((point) => [
+      point.receiveBytesPerSecond,
+      point.sendBytesPerSecond,
+    ]),
   );
-  const receivePath = pathFor(points, (point) => point.receivedBytes, ceiling);
-  const sendPath = pathFor(points, (point) => point.sentBytes, ceiling);
+  const receivePath = linePath(
+    parsed,
+    (point) => point.receiveBytesPerSecond,
+    start,
+    nowMs,
+    ceiling,
+    height,
+    inset,
+  );
+  const sendPath = linePath(
+    parsed,
+    (point) => point.sendBytesPerSecond,
+    start,
+    nowMs,
+    ceiling,
+    height,
+    inset,
+  );
+  const latest = parsed.at(-1);
+  const receiveRate =
+    latest && currentRateAvailable
+      ? formatRate(latest.receiveBytesPerSecond)
+      : "—";
+  const sendRate =
+    latest && currentRateAvailable ? formatRate(latest.sendBytesPerSecond) : "—";
 
   return (
-    <div className="traffic-chart">
+    <div className={`traffic-chart ${compact ? "is-compact" : ""}`.trim()}>
       <div className="traffic-chart-legend">
-        <span className="is-receive">接收</span>
-        <span className="is-send">发送</span>
-        <small>每分钟流量 · 最近 1 小时</small>
+        <span className="is-receive">
+          接收{compact ? "" : ` ${receiveRate}`}
+        </span>
+        <span className="is-send">
+          发送{compact ? "" : ` ${sendRate}`}
+        </span>
+        <small>近 {windowMinutes} 分钟</small>
       </div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label="最近一小时接收与发送流量图"
-        preserveAspectRatio="none"
-      >
-        {[0, 1, 2, 3, 4].map((line) => {
-          const y = inset + (line / 4) * (height - inset * 2);
-          return <line className="chart-grid" key={line} x1={inset} x2={width - inset} y1={y} y2={y} />;
-        })}
-        <path className="chart-line is-receive" d={receivePath} />
-        <path className="chart-line is-send" d={sendPath} />
-      </svg>
-      <div className="traffic-chart-axis">
-        <span>60 分钟前</span>
-        <span>现在</span>
+      <div className="traffic-chart-canvas">
+        {parsed.length === 0 && <span>等待流量样本</span>}
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`近 ${windowMinutes} 分钟接收与发送速度折线图`}
+          preserveAspectRatio="none"
+        >
+          {!compact &&
+            [0, 1, 2, 3].map((line) => {
+              const y = inset + (line / 3) * (height - inset * 2);
+              return (
+                <line
+                  className="chart-grid"
+                  key={line}
+                  x1={inset}
+                  x2={width - inset}
+                  y1={y}
+                  y2={y}
+                />
+              );
+            })}
+          <path className="chart-line is-receive" d={receivePath} />
+          <path className="chart-line is-send" d={sendPath} />
+        </svg>
       </div>
+      {!compact && (
+        <div className="traffic-chart-axis">
+          <span>{windowMinutes} 分钟前</span>
+          <span>现在</span>
+        </div>
+      )}
     </div>
   );
 }

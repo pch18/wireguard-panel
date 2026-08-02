@@ -25,3 +25,10 @@ export function getSession() {
 export function logout() {
   return request<void>("/api/v1/logout", { method: "POST" });
 }
+
+export function changePassword(currentPassword: string, newPassword: string) {
+  return request<void>(
+    "/api/v1/account/password",
+    jsonRequest("PUT", { currentPassword, newPassword }),
+  );
+}

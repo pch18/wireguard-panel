@@ -6,17 +6,26 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"sync"
 
 	"wireguard-panel/internal/model"
 )
 
-var managedFilename = regexp.MustCompile(`^wg([0-9]+)\.conf$`)
+var managedFilename = regexp.MustCompile(`^([A-Za-z0-9_-]{1,15})\.conf$`)
+
+const legacyRuntimeStateFilename = ".wireguard-panel-pending-restarts.json"
 
 type Store struct {
-	directory string
-	mu        sync.RWMutex
+	directory      string
+	mu             sync.RWMutex
+	namespaceMu    sync.Mutex
+	operationMu    sync.Mutex
+	operationLocks map[string]*operationLock
+}
+
+type operationLock struct {
+	mu   sync.Mutex
+	refs int
 }
 
 func NewStore(directory string) (*Store, error) {
@@ -26,18 +35,73 @@ func NewStore(directory string) (*Store, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create WireGuard configuration directory: %w", err)
 	}
-	info, err := os.Stat(directory)
+	info, err := os.Lstat(directory)
 	if err != nil {
 		return nil, fmt.Errorf("stat WireGuard configuration directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("WireGuard configuration directory must not be a symbolic link")
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("WireGuard configuration path is not a directory")
 	}
-	return &Store{directory: directory}, nil
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return nil, fmt.Errorf("protect WireGuard configuration directory: %w", err)
+	}
+	// Older builds persisted a second copy of applied configurations here.
+	// The file is panel-owned and obsolete now that the native .conf file is
+	// the only durable source of truth.
+	if err := os.Remove(filepath.Join(directory, legacyRuntimeStateFilename)); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove obsolete WireGuard runtime state: %w", err)
+	}
+	return &Store{
+		directory:      directory,
+		operationLocks: make(map[string]*operationLock),
+	}, nil
 }
 
-func (store *Store) Directory() string {
-	return store.directory
+// lockInterfaceOperations serializes runtime-changing operations per native
+// Interface without blocking read-only file access or unrelated Interfaces.
+// Sorting also makes multi-Interface operations such as rename deadlock-free.
+func (store *Store) lockInterfaceOperations(ids ...string) func() {
+	unique := make(map[string]bool, len(ids))
+	ordered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" && !unique[id] {
+			unique[id] = true
+			ordered = append(ordered, id)
+		}
+	}
+	sort.Strings(ordered)
+	locks := make([]*operationLock, 0, len(ordered))
+	store.operationMu.Lock()
+	for _, id := range ordered {
+		lock := store.operationLocks[id]
+		if lock == nil {
+			lock = &operationLock{}
+			store.operationLocks[id] = lock
+		}
+		lock.refs++
+		locks = append(locks, lock)
+	}
+	store.operationMu.Unlock()
+	for _, lock := range locks {
+		lock.mu.Lock()
+	}
+	return func() {
+		for index := len(locks) - 1; index >= 0; index-- {
+			locks[index].mu.Unlock()
+		}
+		store.operationMu.Lock()
+		for index, id := range ordered {
+			lock := locks[index]
+			lock.refs--
+			if lock.refs == 0 && store.operationLocks[id] == lock {
+				delete(store.operationLocks, id)
+			}
+		}
+		store.operationMu.Unlock()
+	}
 }
 
 func (store *Store) List() ([]model.Interface, error) {
@@ -46,180 +110,184 @@ func (store *Store) List() ([]model.Interface, error) {
 	return store.listLocked()
 }
 
-func (store *Store) Get(id int) (model.Interface, error) {
+type InterfaceProblem struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	Message  string `json:"message"`
+}
+
+// Inventory scans the directory once and reports every occupied native name,
+// successfully parsed Interface, and per-file parse problem. Invalid files,
+// directories, and symlinks still occupy their names.
+func (store *Store) Inventory() (
+	[]model.Interface,
+	[]string,
+	[]InterfaceProblem,
+	error,
+) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	entries, err := os.ReadDir(store.directory)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("read WireGuard configuration directory: %w", err)
+	}
+	configs := make([]model.Interface, 0, len(entries))
+	names := make([]string, 0, len(entries))
+	problems := make([]InterfaceProblem, 0)
+	for _, entry := range entries {
+		matches := managedFilename.FindStringSubmatch(entry.Name())
+		if matches == nil {
+			continue
+		}
+		id := matches[1]
+		names = append(names, id)
+		config, err := store.readLocked(id)
+		if err != nil {
+			problems = append(problems, InterfaceProblem{
+				ID:       id,
+				Filename: entry.Name(),
+				Message:  err.Error(),
+			})
+			continue
+		}
+		configs = append(configs, config)
+	}
+	sort.Slice(configs, func(left int, right int) bool {
+		return configs[left].ID < configs[right].ID
+	})
+	sort.Strings(names)
+	return configs, names, problems, nil
+}
+
+// InventorySettled waits for every currently addressable Interface operation
+// before taking the inventory snapshot. This prevents a client reconciling
+// after a lost mutation response from observing a file that is still inside a
+// write/runtime transaction and may yet be rolled back.
+func (store *Store) InventorySettled() (
+	[]model.Interface,
+	[]string,
+	[]InterfaceProblem,
+	error,
+) {
+	store.namespaceMu.Lock()
+	defer store.namespaceMu.Unlock()
+	ids, err := store.occupiedInterfaceIDs()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	unlock := store.lockInterfaceOperations(ids...)
+	defer unlock()
+	return store.Inventory()
+}
+
+func (store *Store) Get(id string) (model.Interface, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	return store.readLocked(id)
 }
 
-func (store *Store) Create(input model.InterfaceInput) (model.Interface, error) {
-	input, err := NormalizeInterface(input)
-	if err != nil {
-		return model.Interface{}, err
-	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	configs, err := store.listLocked()
-	if err != nil {
-		return model.Interface{}, err
-	}
-	nextID := 0
-	for _, config := range configs {
-		if config.ID >= nextID {
-			nextID = config.ID + 1
-		}
-	}
-	config := model.Interface{
-		ID:       nextID,
-		Filename: filenameForID(nextID),
-		Peers:    make([]model.Peer, 0),
-	}
-	applyInterfaceInput(&config, input)
-	if err := store.writeLocked(config); err != nil {
-		return model.Interface{}, err
-	}
-	return store.readLocked(nextID)
+// GetSettled returns only a transaction boundary state. Internal mutation
+// code intentionally uses Get while already holding the operation lock.
+func (store *Store) GetSettled(id string) (model.Interface, error) {
+	unlock := store.lockInterfaceOperations(id)
+	defer unlock()
+	return store.Get(id)
 }
 
-func (store *Store) Update(
-	id int,
-	expectedRevision string,
-	input model.InterfaceInput,
+// InspectSettled keeps the transaction boundary stable while a caller checks
+// related external state, such as whether the native Interface is running.
+func (store *Store) InspectSettled(
+	id string,
+	inspect func(model.Interface) error,
 ) (model.Interface, error) {
-	input, err := NormalizeInterface(input)
+	unlock := store.lockInterfaceOperations(id)
+	defer unlock()
+	config, err := store.Get(id)
 	if err != nil {
 		return model.Interface{}, err
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	config, err := store.readLocked(id)
-	if err != nil {
+	if err := inspect(config); err != nil {
 		return model.Interface{}, err
 	}
-	if err := checkRevision(config, expectedRevision); err != nil {
-		return model.Interface{}, err
-	}
-	applyInterfaceInput(&config, input)
-	if err := store.writeLocked(config); err != nil {
-		return model.Interface{}, err
-	}
-	return store.readLocked(id)
+	return config, nil
 }
 
-func (store *Store) Delete(id int, expectedRevision string) error {
-	store.mu.Lock()
-	defer store.mu.Unlock()
+func (store *Store) Config(id string) ([]byte, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 	config, err := store.readLocked(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := checkRevision(config, expectedRevision); err != nil {
-		return err
+	serialized, err := Serialize(config)
+	if err == nil {
+		return serialized, nil
+	}
+	data, readErr := os.ReadFile(store.pathForID(id))
+	if readErr != nil {
+		return nil, fmt.Errorf("read invalid WireGuard configuration for export: %w", readErr)
+	}
+	return data, nil
+}
+
+func (store *Store) ConfigSettled(id string) ([]byte, error) {
+	unlock := store.lockInterfaceOperations(id)
+	defer unlock()
+	return store.Config(id)
+}
+
+// RawConfig returns the file exactly as stored so syntax or fields that the
+// structured editor cannot represent can still be repaired without data loss.
+func (store *Store) RawConfig(id string) ([]byte, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if ValidateInterfaceName(id) != nil {
+		return nil, ErrNotFound
 	}
 	path := store.pathForID(id)
-	if err := os.Remove(path); err != nil {
+	if _, err := safeConfigInfo(path); err != nil {
 		if os.IsNotExist(err) {
-			return ErrNotFound
+			return nil, ErrNotFound
 		}
-		return fmt.Errorf("delete WireGuard configuration: %w", err)
+		return nil, err
 	}
-	return nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("read raw WireGuard configuration: %w", err)
+	}
+	return data, nil
 }
 
-func (store *Store) AddPeer(
-	id int,
-	expectedRevision string,
-	input model.PeerInput,
-) (model.Interface, error) {
-	input, systemGenerated, err := preparePeerInput(input)
-	if err != nil {
-		return model.Interface{}, err
-	}
-	peerID, err := newPeerID()
-	if err != nil {
-		return model.Interface{}, err
-	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	config, err := store.readLocked(id)
-	if err != nil {
-		return model.Interface{}, err
-	}
-	if err := checkRevision(config, expectedRevision); err != nil {
-		return model.Interface{}, err
-	}
-	peer := peerFromInput(input, peerID, systemGenerated)
-	config.Peers = append(config.Peers, peer)
-	if err := store.writeLocked(config); err != nil {
-		return model.Interface{}, err
-	}
-	return store.readLocked(id)
+func (store *Store) RawConfigSettled(id string) ([]byte, error) {
+	unlock := store.lockInterfaceOperations(id)
+	defer unlock()
+	return store.RawConfig(id)
 }
 
-func (store *Store) UpdatePeer(
-	interfaceID int,
-	peerID string,
-	expectedRevision string,
-	input model.PeerInput,
-) (model.Interface, error) {
-	input, systemGenerated, err := preparePeerInput(input)
-	if err != nil {
-		return model.Interface{}, err
-	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
+func (store *Store) PeerConfig(interfaceID string, publicKey string) ([]byte, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 	config, err := store.readLocked(interfaceID)
 	if err != nil {
-		return model.Interface{}, err
+		return nil, err
 	}
-	if err := checkRevision(config, expectedRevision); err != nil {
-		return model.Interface{}, err
-	}
-	index := peerIndex(config.Peers, peerID)
+	index := peerIndexByPublicKey(config.Peers, publicKey)
 	if index < 0 {
-		return model.Interface{}, ErrPeerNotFound
+		return nil, ErrPeerNotFound
 	}
-	existing := config.Peers[index]
-	if !systemGenerated &&
-		existing.SystemGenerated &&
-		input.PrivateKey == existing.PrivateKey &&
-		input.PublicKey == existing.PublicKey {
-		systemGenerated = true
-	}
-	peer := peerFromInput(input, existing.ID, systemGenerated)
-	config.Peers[index] = peer
-	if err := store.writeLocked(config); err != nil {
-		return model.Interface{}, err
-	}
-	return store.readLocked(interfaceID)
+	return SerializePeer(config.Peers[index])
 }
 
-func (store *Store) DeletePeer(
-	interfaceID int,
-	peerID string,
-	expectedRevision string,
-) (model.Interface, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	config, err := store.readLocked(interfaceID)
-	if err != nil {
-		return model.Interface{}, err
-	}
-	if err := checkRevision(config, expectedRevision); err != nil {
-		return model.Interface{}, err
-	}
-	index := peerIndex(config.Peers, peerID)
-	if index < 0 {
-		return model.Interface{}, ErrPeerNotFound
-	}
-	config.Peers = append(config.Peers[:index], config.Peers[index+1:]...)
-	if err := store.writeLocked(config); err != nil {
-		return model.Interface{}, err
-	}
-	return store.readLocked(interfaceID)
+func (store *Store) PeerConfigSettled(interfaceID string, publicKey string) ([]byte, error) {
+	unlock := store.lockInterfaceOperations(interfaceID)
+	defer unlock()
+	return store.PeerConfig(interfaceID, publicKey)
 }
 
-func (store *Store) IPPlan(id int) (model.IPPlan, error) {
+func (store *Store) IPPlan(id string) (model.IPPlan, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	config, err := store.readLocked(id)
@@ -227,6 +295,12 @@ func (store *Store) IPPlan(id int) (model.IPPlan, error) {
 		return model.IPPlan{}, err
 	}
 	return BuildIPPlan(config), nil
+}
+
+func (store *Store) IPPlanSettled(id string) (model.IPPlan, error) {
+	unlock := store.lockInterfaceOperations(id)
+	defer unlock()
+	return store.IPPlan(id)
 }
 
 func (store *Store) listLocked() ([]model.Interface, error) {
@@ -240,8 +314,8 @@ func (store *Store) listLocked() ([]model.Interface, error) {
 		if matches == nil {
 			continue
 		}
-		id, err := strconv.Atoi(matches[1])
-		if err != nil || filenameForID(id) != entry.Name() {
+		id := matches[1]
+		if filenameForID(id) != entry.Name() {
 			return nil, fmt.Errorf("%w: invalid managed filename %s", ErrInvalidFile, entry.Name())
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -259,8 +333,8 @@ func (store *Store) listLocked() ([]model.Interface, error) {
 	return configs, nil
 }
 
-func (store *Store) readLocked(id int) (model.Interface, error) {
-	if id < 0 {
+func (store *Store) readLocked(id string) (model.Interface, error) {
+	if ValidateInterfaceName(id) != nil {
 		return model.Interface{}, ErrNotFound
 	}
 	path := store.pathForID(id)
@@ -289,6 +363,70 @@ func (store *Store) writeLocked(config model.Interface) error {
 	if err != nil {
 		return err
 	}
+	return store.writeRawLocked(config.ID, data)
+}
+
+func (store *Store) write(config model.Interface) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.writeLocked(config)
+}
+
+func (store *Store) writeRaw(id string, data []byte) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.writeRawLocked(id, data)
+}
+
+func (store *Store) configExists(id string) (bool, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if _, err := os.Lstat(store.pathForID(id)); err == nil {
+		return true, nil
+	} else if os.IsNotExist(err) {
+		return false, nil
+	} else {
+		return false, err
+	}
+}
+
+func (store *Store) occupiedInterfaceIDs() ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	entries, err := os.ReadDir(store.directory)
+	if err != nil {
+		return nil, fmt.Errorf("read WireGuard configuration directory: %w", err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if matches := managedFilename.FindStringSubmatch(entry.Name()); matches != nil {
+			ids = append(ids, matches[1])
+		}
+	}
+	return ids, nil
+}
+
+func (store *Store) remove(id string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := os.Remove(store.pathForID(id)); err != nil {
+		return err
+	}
+	store.syncDirectoryLocked()
+	return nil
+}
+
+func (store *Store) rename(oldID string, newID string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := os.Rename(store.pathForID(oldID), store.pathForID(newID)); err != nil {
+		return err
+	}
+	store.syncDirectoryLocked()
+	return nil
+}
+
+func (store *Store) writeRawLocked(id string, data []byte) error {
 	temporary, err := os.CreateTemp(store.directory, ".wg-panel-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary WireGuard configuration: %w", err)
@@ -313,23 +451,27 @@ func (store *Store) writeLocked(config model.Interface) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary WireGuard configuration: %w", err)
 	}
-	if err := os.Rename(temporaryPath, store.pathForID(config.ID)); err != nil {
+	if err := os.Rename(temporaryPath, store.pathForID(id)); err != nil {
 		return fmt.Errorf("replace WireGuard configuration: %w", err)
 	}
 	committed = true
+	store.syncDirectoryLocked()
+	return nil
+}
+
+func (store *Store) syncDirectoryLocked() {
 	if directory, err := os.Open(store.directory); err == nil {
 		_ = directory.Sync()
 		_ = directory.Close()
 	}
-	return nil
 }
 
-func (store *Store) pathForID(id int) string {
+func (store *Store) pathForID(id string) string {
 	return filepath.Join(store.directory, filenameForID(id))
 }
 
-func filenameForID(id int) string {
-	return fmt.Sprintf("wg%d.conf", id)
+func filenameForID(id string) string {
+	return id + ".conf"
 }
 
 func safeConfigInfo(path string) (os.FileInfo, error) {
@@ -346,13 +488,17 @@ func safeConfigInfo(path string) (os.FileInfo, error) {
 	return info, nil
 }
 
-func peerIndex(peers []model.Peer, id string) int {
+func peerIndexByPublicKey(peers []model.Peer, publicKey string) int {
 	for index, peer := range peers {
-		if peer.ID == id {
+		if peer.PublicKey == publicKey {
 			return index
 		}
 	}
 	return -1
+}
+
+func duplicatePeerPublicKey() error {
+	return fmt.Errorf("%w: Peer PublicKey 不能重复", ErrConflict)
 }
 
 func checkRevision(config model.Interface, expected string) error {
@@ -368,39 +514,6 @@ func checkRevision(config model.Interface, expected string) error {
 	return nil
 }
 
-func preparePeerInput(input model.PeerInput) (model.PeerInput, bool, error) {
-	systemGenerated := input.GenerateKeyPair
-	if input.GenerateKeyPair {
-		if input.PrivateKey != "" || input.PublicKey != "" {
-			return model.PeerInput{}, false, invalid(
-				"生成密钥对时不能同时提交 PrivateKey 或 PublicKey",
-			)
-		}
-		privateKey, publicKey, err := GenerateKeyPair()
-		if err != nil {
-			return model.PeerInput{}, false, err
-		}
-		input.PrivateKey = privateKey
-		input.PublicKey = publicKey
-	} else if input.PrivateKey != "" && input.PublicKey == "" {
-		publicKey, err := PublicKeyFromPrivate(input.PrivateKey)
-		if err != nil {
-			return model.PeerInput{}, false, err
-		}
-		input.PublicKey = publicKey
-	}
-	if input.GeneratePresharedKey {
-		if input.PresharedKey != "" {
-			return model.PeerInput{}, false, invalid(
-				"生成 PresharedKey 时不能同时提交已有值",
-			)
-		}
-		presharedKey, err := GeneratePresharedKey()
-		if err != nil {
-			return model.PeerInput{}, false, err
-		}
-		input.PresharedKey = presharedKey
-	}
-	normalized, err := NormalizePeer(input)
-	return normalized, systemGenerated, err
+func preparePeerInput(input model.PeerInput) (model.PeerInput, error) {
+	return NormalizePeer(input)
 }

@@ -4,10 +4,18 @@ import {
   notifySessionExpired,
   request,
 } from "../../app/apiClient";
-export { linesToValues, valuesToLines } from "./formUtils";
+import { peerPublicKeyPath } from "./peerPath";
+export {
+  digitsOnly,
+  interfaceNameOnly,
+  linesToValues,
+  nextInterfaceName,
+  valuesToInline,
+  valuesToLines,
+} from "./formUtils";
+export { peerPublicKeyPath } from "./peerPath";
 
 export type WireGuardPeer = {
-  id: string;
   name: string;
   privateKey: string;
   publicKey: string;
@@ -15,38 +23,38 @@ export type WireGuardPeer = {
   allowedIPs: string[];
   endpoint: string;
   persistentKeepalive?: number;
-  clientAddress: string[];
-  clientPersistentKeepalive?: number;
-  systemGenerated: boolean;
 };
 
 export type WireGuardInterface = {
-  id: number;
+  id: string;
   filename: string;
   revision: string;
-  name: string;
   privateKey: string;
   address: string[];
   listenPort?: number;
-  fwMark: string;
   dns: string[];
   mtu?: number;
-  table: string;
-  preUp: string[];
-  postUp: string[];
-  preDown: string[];
-  postDown: string[];
-  saveConfig: boolean;
   clientEndpoint: string;
-  clientDNS: string[];
   clientAllowedIPs: string[];
-  clientPersistentKeepalive?: number;
   peers: WireGuardPeer[];
+  validationErrors?: string[];
+};
+
+export type InterfaceProblem = {
+  id: string;
+  filename: string;
+  message: string;
+};
+
+export type InterfaceInventory = {
+  interfaces: WireGuardInterface[];
+  occupiedNames: string[];
+  problems: InterfaceProblem[];
 };
 
 export type InterfaceInput = Omit<
   WireGuardInterface,
-  "id" | "filename" | "revision" | "peers"
+  "id" | "filename" | "revision" | "peers" | "validationErrors"
 >;
 
 export type PeerInput = {
@@ -57,15 +65,48 @@ export type PeerInput = {
   allowedIPs: string[];
   endpoint: string;
   persistentKeepalive?: number;
-  clientAddress: string[];
-  clientPersistentKeepalive?: number;
-  generateKeyPair: boolean;
-  generatePresharedKey: boolean;
 };
 
+export type MTUProbeResult = {
+  target: string;
+  method: "icmp-echo-df";
+  pathMTU: number;
+  wireGuardMTU: number;
+  overheadBytes: number;
+};
+
+export const interfacesChangedEvent = "wireguard-panel:interfaces-changed";
+
+function notifyInterfacesChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(interfacesChangedEvent));
+  }
+}
+
+async function refreshInterfacesAfter<T>(operation: Promise<T>) {
+  try {
+    return await operation;
+  } finally {
+    // A network interruption can happen after the server has committed a
+    // mutation but before the response reaches the browser. Always reconcile
+    // the inventory instead of assuming that a rejected fetch means no change.
+    notifyInterfacesChanged();
+  }
+}
+
 export type IPPlan = {
+  revision: string;
   networks: IPNetworkPlan[];
+  allowedRanges: string[];
+  reservedAddresses: string[];
+  assignments: IPAssignment[];
   conflicts: IPConflict[];
+};
+
+export type IPAssignment = {
+  allowedIP: string;
+  peerPublicKey: string;
+  peerName: string;
 };
 
 export type IPNetworkPlan = {
@@ -80,13 +121,17 @@ export type IPNetworkPlan = {
 export type IPConflict = {
   kind: string;
   address: string;
-  peerID?: string;
+  peerPublicKey?: string;
   message: string;
 };
 
 export type InterfaceRuntimeStatus = {
-  interfaceID: number;
+  interfaceID: string;
   interfaceName: string;
+  configurationRevision: string;
+  runtimeControllable?: boolean;
+  runtimeStateAvailable?: boolean;
+  running?: boolean;
   collectorAvailable: boolean;
   message?: string;
   sampledAt?: string;
@@ -94,7 +139,6 @@ export type InterfaceRuntimeStatus = {
 };
 
 export type PeerRuntimeStatus = {
-  peerID: string;
   publicKey: string;
   available: boolean;
   active: boolean;
@@ -106,33 +150,29 @@ export type PeerRuntimeStatus = {
   sendBytesPerSecond: number;
   activeDurationSeconds: number;
   inactiveDurationSeconds: number;
-  history: TrafficPoint[];
 };
 
 export type TrafficPoint = {
-  timestamp: string;
-  receivedBytes: number;
-  sentBytes: number;
+  sampledAt: string;
+  receiveBytesPerSecond: number;
+  sendBytesPerSecond: number;
+};
+
+export type InterfaceTrafficEvent = {
+  kind: "history" | "update";
+  status: InterfaceRuntimeStatus;
+  interfaceTraffic: TrafficPoint[];
+  peerTraffic: Record<string, TrafficPoint[]>;
 };
 
 export const blankInterface = (): InterfaceInput => ({
-  name: "",
   privateKey: "",
   address: [],
   listenPort: undefined,
-  fwMark: "",
   dns: [],
   mtu: undefined,
-  table: "",
-  preUp: [],
-  postUp: [],
-  preDown: [],
-  postDown: [],
-  saveConfig: false,
   clientEndpoint: "",
-  clientDNS: [],
   clientAllowedIPs: [],
-  clientPersistentKeepalive: 25,
 });
 
 export const blankPeer = (): PeerInput => ({
@@ -143,150 +183,242 @@ export const blankPeer = (): PeerInput => ({
   allowedIPs: [],
   endpoint: "",
   persistentKeepalive: undefined,
-  clientAddress: [],
-  clientPersistentKeepalive: 25,
-  generateKeyPair: true,
-  generatePresharedKey: false,
 });
 
-export async function listInterfaces() {
-  const response = await request<{ interfaces: WireGuardInterface[] }>(
-    "/api/v1/interfaces",
+export function probeWireGuardMTU() {
+  return request<MTUProbeResult>("/api/v1/wireguard/mtu-probe", {
+    method: "POST",
+  });
+}
+
+export function listInterfaces() {
+  return request<InterfaceInventory>("/api/v1/interfaces");
+}
+
+function interfacePath(id: string) {
+  return encodeURIComponent(id);
+}
+
+export function getInterface(id: string) {
+  return request<WireGuardInterface>(`/api/v1/interfaces/${interfacePath(id)}`);
+}
+
+export function createInterface(name: string, input: InterfaceInput) {
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      "/api/v1/interfaces",
+      jsonRequest("POST", { name, ...input }),
+    ),
   );
-  return response.interfaces;
 }
 
-export function getInterface(id: number) {
-  return request<WireGuardInterface>(`/api/v1/interfaces/${id}`);
-}
-
-export function createInterface(input: InterfaceInput) {
-  return request<WireGuardInterface>(
-    "/api/v1/interfaces",
-    jsonRequest("POST", input),
+export function renameInterface(
+  id: string,
+  revision: string,
+  name: string,
+) {
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(id)}/rename`,
+      revisionJSONRequest("POST", revision, { name }),
+    ),
   );
 }
 
 export function updateInterface(
-  id: number,
+  id: string,
   revision: string,
   input: InterfaceInput,
+  restartConfirmed = false,
 ) {
-  return request<WireGuardInterface>(
-    `/api/v1/interfaces/${id}`,
-    revisionJSONRequest("PUT", revision, input),
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(id)}`,
+      revisionJSONRequest("PUT", revision, input, restartConfirmed),
+    ),
   );
 }
 
-export function deleteInterface(id: number, revision: string) {
-  return request<void>(`/api/v1/interfaces/${id}`, {
-    method: "DELETE",
-    headers: revisionHeader(revision),
-  });
+export function deleteInterface(id: string, revision: string) {
+  return refreshInterfacesAfter(
+    request<void>(`/api/v1/interfaces/${interfacePath(id)}`, {
+      method: "DELETE",
+      headers: revisionHeader(revision),
+    }),
+  );
 }
 
 export function createPeer(
-  interfaceID: number,
+  interfaceID: string,
   revision: string,
   input: PeerInput,
+  restartConfirmed = false,
 ) {
-  return request<WireGuardInterface>(
-    `/api/v1/interfaces/${interfaceID}/peers`,
-    revisionJSONRequest("POST", revision, input),
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(interfaceID)}/peers`,
+      revisionJSONRequest("POST", revision, input, restartConfirmed),
+    ),
   );
 }
 
 export function updatePeer(
-  interfaceID: number,
-  peerID: string,
+  interfaceID: string,
+  originalPublicKey: string,
   revision: string,
   input: PeerInput,
+  restartConfirmed = false,
 ) {
-  return request<WireGuardInterface>(
-    `/api/v1/interfaces/${interfaceID}/peers/${encodeURIComponent(peerID)}`,
-    revisionJSONRequest("PUT", revision, input),
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(interfaceID)}/peers/${peerPublicKeyPath(originalPublicKey)}`,
+      revisionJSONRequest("PUT", revision, input, restartConfirmed),
+    ),
   );
 }
 
 export function deletePeer(
-  interfaceID: number,
-  peerID: string,
+  interfaceID: string,
+  publicKey: string,
   revision: string,
+  restartConfirmed = false,
 ) {
-  return request<WireGuardInterface>(
-    `/api/v1/interfaces/${interfaceID}/peers/${encodeURIComponent(peerID)}`,
-    {
-      method: "DELETE",
-      headers: revisionHeader(revision),
-    },
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(interfaceID)}/peers/${peerPublicKeyPath(publicKey)}`,
+      {
+        method: "DELETE",
+        headers: mutationHeaders(revision, restartConfirmed),
+      },
+    ),
   );
 }
 
-export function getIPPlan(interfaceID: number) {
-  return request<IPPlan>(`/api/v1/interfaces/${interfaceID}/ip-plan`);
+export function getIPPlan(interfaceID: string) {
+  return request<IPPlan>(`/api/v1/interfaces/${interfacePath(interfaceID)}/ip-plan`);
 }
 
-export function getRuntimeStatus(interfaceID: number) {
+export function getRuntimeStatus(interfaceID: string) {
   return request<InterfaceRuntimeStatus>(
-    `/api/v1/interfaces/${interfaceID}/status`,
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/status`,
   );
 }
 
-export async function downloadClientConfig(
-  interfaceID: number,
-  peerID: string,
-) {
-  const response = await fetch(
-    `/api/v1/interfaces/${interfaceID}/peers/${encodeURIComponent(peerID)}/client-config`,
-    {
-      credentials: "same-origin",
-      headers: { Accept: "text/plain" },
-    },
+export function runtimeEventsURL(interfaceID: string) {
+  return `/api/v1/interfaces/${interfacePath(interfaceID)}/events`;
+}
+
+export function startInterface(interfaceID: string, revision: string) {
+  return request<WireGuardInterface>(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/start`,
+    { method: "POST", headers: revisionHeader(revision) },
   );
+}
+
+export function stopInterface(interfaceID: string, revision: string) {
+  return request<WireGuardInterface>(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/stop`,
+    { method: "POST", headers: revisionHeader(revision) },
+  );
+}
+
+export function restartInterface(interfaceID: string, revision: string) {
+  return request<WireGuardInterface>(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/restart`,
+    { method: "POST", headers: revisionHeader(revision) },
+  );
+}
+
+export function importInterfaceConfig(config: string) {
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      "/api/v1/interfaces/import",
+      jsonRequest("POST", { config }),
+    ),
+  );
+}
+
+export function replaceInterfaceConfig(
+  interfaceID: string,
+  revision: string,
+  config: string,
+  restartConfirmed = false,
+) {
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(interfaceID)}/import`,
+      revisionJSONRequest("PUT", revision, { config }, restartConfirmed),
+    ),
+  );
+}
+
+export function importPeerConfig(
+  interfaceID: string,
+  revision: string,
+  config: string,
+  restartConfirmed = false,
+) {
+  return refreshInterfacesAfter(
+    request<WireGuardInterface>(
+      `/api/v1/interfaces/${interfacePath(interfaceID)}/peers/import`,
+      revisionJSONRequest("POST", revision, { config }, restartConfirmed),
+    ),
+  );
+}
+
+export function getInterfaceConfig(interfaceID: string) {
+  return requestText(`/api/v1/interfaces/${interfacePath(interfaceID)}/config`);
+}
+
+export function getRawInterfaceConfig(interfaceID: string) {
+  return requestText(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/raw-config`,
+  );
+}
+
+export function getPeerConfig(interfaceID: string, publicKey: string) {
+  return requestText(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/peers/${peerPublicKeyPath(publicKey)}/config`,
+  );
+}
+
+export function getClientConfigPreview(
+  interfaceID: string,
+  publicKey: string,
+) {
+  return requestText(
+    `/api/v1/interfaces/${interfacePath(interfaceID)}/peers/${peerPublicKeyPath(publicKey)}/client-config`,
+  );
+}
+
+async function requestText(path: string) {
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    headers: { Accept: "text/plain" },
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as {
       error?: { code?: string; message?: string };
     };
     if (response.status === 401) notifySessionExpired();
     throw new ApiError(
-      body.error?.message || `客户端配置生成失败（${response.status}）`,
+      body.error?.message || `请求失败（${response.status}）`,
       response.status,
       body.error?.code,
     );
   }
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const match = /filename="([^"]+)"/i.exec(disposition);
-  const filename = match?.[1] || `wireguard-peer-${peerID}.conf`;
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  return filename;
+  return response.text();
 }
 
 export function interfaceToInput(config: WireGuardInterface): InterfaceInput {
   return {
-    name: config.name,
     privateKey: config.privateKey,
     address: [...config.address],
     listenPort: config.listenPort,
-    fwMark: config.fwMark,
     dns: [...config.dns],
     mtu: config.mtu,
-    table: config.table,
-    preUp: [...config.preUp],
-    postUp: [...config.postUp],
-    preDown: [...config.preDown],
-    postDown: [...config.postDown],
-    saveConfig: config.saveConfig,
     clientEndpoint: config.clientEndpoint,
-    clientDNS: [...config.clientDNS],
     clientAllowedIPs: [...config.clientAllowedIPs],
-    clientPersistentKeepalive: config.clientPersistentKeepalive,
   };
 }
 
@@ -299,10 +431,6 @@ export function peerToInput(peer: WireGuardPeer): PeerInput {
     allowedIPs: [...peer.allowedIPs],
     endpoint: peer.endpoint,
     persistentKeepalive: peer.persistentKeepalive,
-    clientAddress: [...peer.clientAddress],
-    clientPersistentKeepalive: peer.clientPersistentKeepalive,
-    generateKeyPair: false,
-    generatePresharedKey: false,
   };
 }
 
@@ -310,17 +438,27 @@ function revisionHeader(revision: string) {
   return { "If-Match": `"${revision}"` };
 }
 
+function mutationHeaders(revision: string, restartConfirmed: boolean) {
+  return {
+    ...revisionHeader(revision),
+    ...(restartConfirmed
+      ? { "X-WireGuard-Restart-Confirmed": "true" }
+      : {}),
+  };
+}
+
 function revisionJSONRequest(
   method: string,
   revision: string,
   body: unknown,
+  restartConfirmed = false,
 ): RequestInit {
   const init = jsonRequest(method, body);
   return {
     ...init,
     headers: {
       ...init.headers,
-      ...revisionHeader(revision),
+      ...mutationHeaders(revision, restartConfirmed),
     },
   };
 }

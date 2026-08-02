@@ -33,7 +33,7 @@ func GeneratePresharedKey() (string, error) {
 }
 
 func PublicKeyFromPrivate(privateKey string) (string, error) {
-	privateBytes, err := base64.StdEncoding.DecodeString(privateKey)
+	privateBytes, err := base64.StdEncoding.Strict().DecodeString(privateKey)
 	if err != nil || len(privateBytes) != 32 {
 		return "", invalid("PrivateKey 必须是 WireGuard 使用的 32 字节 Base64 密钥")
 	}
@@ -42,21 +42,4 @@ func PublicKeyFromPrivate(privateKey string) (string, error) {
 		return "", invalid("PrivateKey 无法生成 WireGuard PublicKey")
 	}
 	return base64.StdEncoding.EncodeToString(key.PublicKey().Bytes()), nil
-}
-
-func newPeerID() (string, error) {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		return "", fmt.Errorf("generate Peer ID: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf(
-		"%08x-%04x-%04x-%04x-%012x",
-		value[0:4],
-		value[4:6],
-		value[6:8],
-		value[8:10],
-		value[10:16],
-	), nil
 }

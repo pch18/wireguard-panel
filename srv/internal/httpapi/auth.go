@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ type authHandler struct {
 type loginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required"`
 }
 
 func (handler *authHandler) login(context *gin.Context) {
@@ -66,6 +72,42 @@ func (handler *authHandler) session(context *gin.Context) {
 	handler.setSessionCookie(context, token, sessionMaxAge)
 	user, _ := currentUser(context)
 	context.JSON(http.StatusOK, gin.H{"authenticated": true, "user": user})
+}
+
+func (handler *authHandler) changePassword(context *gin.Context) {
+	var request changePasswordRequest
+	if err := context.ShouldBindJSON(&request); err != nil {
+		writeError(context, http.StatusBadRequest, "invalid_request", "请输入当前密码和新密码")
+		return
+	}
+	token, err := context.Cookie(sessionCookieName)
+	if err != nil {
+		handler.writeSessionExpired(context)
+		return
+	}
+	if err := handler.auth.ChangePassword(
+		request.CurrentPassword,
+		request.NewPassword,
+		token,
+	); err != nil {
+		switch {
+		case errors.Is(err, service.ErrCurrentPasswordMismatch):
+			writeError(context, http.StatusForbidden, "invalid_current_password", err.Error())
+		case errors.Is(err, service.ErrPasswordUnchanged),
+			errors.Is(err, service.ErrInvalidNewPassword):
+			writeError(context, http.StatusBadRequest, "invalid_new_password", err.Error())
+		default:
+			_ = context.Error(err)
+			writeError(
+				context,
+				http.StatusInternalServerError,
+				"password_update_failed",
+				"密码暂时无法保存，请稍后重试",
+			)
+		}
+		return
+	}
+	context.Status(http.StatusNoContent)
 }
 
 func (handler *authHandler) requireSession(context *gin.Context) {

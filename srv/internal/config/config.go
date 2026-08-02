@@ -7,27 +7,35 @@ import (
 )
 
 const (
-	defaultPort     = "8080"
-	defaultUsername = "admin"
-	defaultPassword = "admin5555"
+	defaultPort               = "8080"
+	defaultWireGuardDirectory = "/etc/wireguard"
+	defaultAuthenticationFile = "/etc/wireguard-panel/auth.json"
+	TunnelModeSystem          = "system"
+	TunnelModeFileOnly        = "file-only"
 )
 
 type Config struct {
-	Port     string
-	Username string
-	Password string
+	Port               string
+	TunnelMode         string
+	WireGuardDirectory string
+	AuthenticationFile string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:     valueOrDefault("APP_PORT", defaultPort),
-		Username: valueOrDefault("APP_USERNAME", defaultUsername),
-		Password: valueOrDefault("APP_PASSWORD", defaultPassword),
+		Port:               valueOrDefault("APP_PORT", defaultPort),
+		TunnelMode:         strings.ToLower(strings.TrimSpace(valueOrDefault("APP_TUNNEL_MODE", TunnelModeSystem))),
+		WireGuardDirectory: valueOrDefault("APP_WIREGUARD_DIRECTORY", defaultWireGuardDirectory),
+		AuthenticationFile: valueOrDefault("APP_AUTHENTICATION_FILE", defaultAuthenticationFile),
 	}
-
-	cfg.Username = strings.TrimSpace(cfg.Username)
-	if cfg.Username == "" || cfg.Password == "" {
-		return Config{}, fmt.Errorf("APP_USERNAME and APP_PASSWORD cannot be empty")
+	switch cfg.TunnelMode {
+	case TunnelModeSystem, TunnelModeFileOnly:
+	default:
+		return Config{}, fmt.Errorf(
+			"APP_TUNNEL_MODE must be %q or %q",
+			TunnelModeSystem,
+			TunnelModeFileOnly,
+		)
 	}
 	return cfg, nil
 }
