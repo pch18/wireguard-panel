@@ -27,17 +27,6 @@ wget -qO- \
 安装器会使用 GitHub Latest Release。测试和生产服务器执行相同命令，不需要仓库中的
 服务器配置或远程部署工具。
 
-如果需要严格固定版本，应下载对应标签下的同一个安装器，并传入相同标签：
-
-```sh
-release_tag=vX.Y.Z
-installer=/tmp/wireguard-panel-install.sh
-wget -qO "$installer" \
-  "https://raw.githubusercontent.com/pch18/wireguard-panel/${release_tag}/install-alpine.sh"
-WIREGUARD_PANEL_RELEASE_TAG="$release_tag" sh "$installer"
-rm -f "$installer"
-```
-
 ## 安装后验收
 
 在目标服务器执行：
@@ -51,9 +40,3 @@ wg show
 
 还应从服务器外部访问面板和健康接口，并确认 `/etc/wireguard-panel` 权限为 `0700`、
 `auth.json` 权限为 `0600`。首次登录后立即修改默认密码。
-
-## 回滚
-
-安装器在新服务启动或健康检查失败时会自动恢复旧二进制、OpenRC 配置、运行状态和开机
-启动状态。若新版本已成功运行但仍需人工回滚，在服务器本机重新执行上一正式标签的
-`install-alpine.sh` 即可。

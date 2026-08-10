@@ -4,10 +4,9 @@
 
 - When the user asks to release or deploy this project, read `DEPLOYMENT.md` first.
 - Never store deployment target addresses, SSH users, or private-key paths in the repository.
-- Release committed and tested code before production deployment. Run the tagged
-  `install-alpine.sh` directly on each target server; test and production servers use the same installer.
-- After deployment, report the Release tag, service state, local health check, external health check,
-  and whether rollback was needed.
+- Release committed and tested code before production deployment. Run `install-alpine.sh` directly
+  on each target server; test and production servers use the same installer.
+- After deployment, report the Release tag, service state, local health check, and external health check.
 
 ## Modal stacking
 

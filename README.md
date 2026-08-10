@@ -224,15 +224,12 @@ SameSite 保护，但不会设置 Secure 属性。
 
 当前正式安装方式是 Alpine Linux AMD64 + OpenRC。安装器只写入程序文件和 OpenRC
 服务定义，不创建系统账户或数据库，服务始终以 root 运行。程序首次启动时会自行创建
-受保护的认证文件，用于持久化网页中修改后的密码。升级只重启管理面板进程，不执行
-`wg-quick down/up`，因此不会主动中断已经运行的 WireGuard Interface；若新面板进程
-启动失败，安装器会恢复上一版二进制并尝试重新启动面板。
+受保护的认证文件，用于持久化网页中修改后的密码。
 
 ## Alpine 一键安装
 
-Release 提供静态链接的 Linux AMD64 安装包及 SHA-256 校验文件。目标主机需要是
-使用 OpenRC 的 Alpine Linux AMD64。安装器统一使用系统自带的 BusyBox `wget`，
-并自动补齐 `wireguard-tools`、`iproute2` 和 `iptables`。以 root 执行：
+Release 提供静态链接的 Linux AMD64 安装包。目标主机需要是使用 OpenRC 的 Alpine
+Linux AMD64，并提前准备好 WireGuard 运行环境。以 root 执行：
 
 ```sh
 wget -qO- \
@@ -242,18 +239,10 @@ wget -qO- \
 
 安装器会：
 
-- 统一使用 `wget` 下载 Release 并完成健康检查；
-- 安装缺失的 `wireguard-tools`、`iproute2` 和 `iptables`；
-- 立即启用 IPv4 转发，并在内核支持 IPv6 时同时启用 IPv6 转发；转发设置写入
-  `/etc/sysctl.d/99-wireguard-panel-forwarding.conf`，由 OpenRC 在启动时恢复；
 - 从 GitHub Latest Release 下载 `wireguard-panel_linux_amd64.tar.gz`；
-- 校验同名 `.sha256` 文件；
 - 安装二进制到 `/usr/local/bin/wireguard-panel`；
 - 写入 `/etc/init.d/wireguard-panel`，固定以 root 运行；
-- 注册并启动 `wireguard-panel` OpenRC 服务；
-- 启动或回环健康检查失败时回滚上一版面板二进制、服务定义和启动状态，不重启
-  WireGuard Interface；
-- 不创建系统账户，也不自动添加 NAT 或防火墙规则。
+- 注册并启动 `wireguard-panel` OpenRC 服务。
 
 服务首次启动后，程序自行创建权限为 `0700` 的 `/etc/wireguard-panel` 和权限为
 `0600` 的 `/etc/wireguard-panel/auth.json`。
@@ -273,7 +262,7 @@ rc-service wireguard-panel restart
 
 安装脚本本身不会创建这个可选环境文件。目前只支持 Alpine Linux AMD64。
 
-维护者的 Release、服务器本机安装、验收与回滚流程见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+维护者的 Release、服务器本机安装与验收流程见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 测试和生产服务器使用同一个 `install-alpine.sh`，仓库不保存服务器或 SSH 信息。
 
 ## 项目结构
@@ -299,7 +288,7 @@ rc-service wireguard-panel restart
 │   ├── web/                    # 前端构建产物
 │   └── main.go
 ├── install-alpine.sh           # Alpine/OpenRC 一键安装
-├── DEPLOYMENT.md               # Release、本机安装、验收与回滚
+├── DEPLOYMENT.md               # Release、本机安装与验收
 └── scripts/
     └── build-release.sh        # 原生 AMD64 Release 构建
 ```
