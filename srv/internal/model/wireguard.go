@@ -11,6 +11,7 @@ type Interface struct {
 	ListenPort       *uint16  `json:"listenPort,omitempty"`
 	DNS              []string `json:"dns"`
 	MTU              *int     `json:"mtu,omitempty"`
+	TCPMSSClamping   bool     `json:"tcpMSSClamping"`
 	ClientEndpoint   string   `json:"clientEndpoint"`
 	ClientAllowedIPs []string `json:"clientAllowedIPs"`
 	Peers            []Peer   `json:"peers"`
@@ -29,6 +30,7 @@ type InterfaceInput struct {
 	ListenPort       *uint16  `json:"listenPort"`
 	DNS              []string `json:"dns"`
 	MTU              *int     `json:"mtu"`
+	TCPMSSClamping   bool     `json:"tcpMSSClamping"`
 	ClientEndpoint   string   `json:"clientEndpoint"`
 	ClientAllowedIPs []string `json:"clientAllowedIPs"`
 }

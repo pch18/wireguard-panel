@@ -43,6 +43,7 @@ func classifyRuntimeChange(before model.Interface, after model.Interface) runtim
 		return runtimeUnchanged
 	}
 	if !reflect.DeepEqual(before.DNS, after.DNS) ||
+		before.TCPMSSClamping != after.TCPMSSClamping ||
 		!reflect.DeepEqual(before.UnmanagedInterfaceLines, after.UnmanagedInterfaceLines) ||
 		!mtuCanBeUpdatedWithoutRestart(before.MTU, after.MTU) ||
 		defaultRouteSetChanged(before, after) {
@@ -57,6 +58,7 @@ func runtimeConfigurationEqual(left model.Interface, right model.Interface) bool
 		equalUint16(left.ListenPort, right.ListenPort) &&
 		reflect.DeepEqual(left.DNS, right.DNS) &&
 		equalInt(left.MTU, right.MTU) &&
+		left.TCPMSSClamping == right.TCPMSSClamping &&
 		reflect.DeepEqual(left.UnmanagedInterfaceLines, right.UnmanagedInterfaceLines) &&
 		reflect.DeepEqual(runtimePeers(left.Peers), runtimePeers(right.Peers))
 }

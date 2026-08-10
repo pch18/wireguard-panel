@@ -117,3 +117,26 @@ export function trafficTooltipPosition(
     top: Math.min(bounds.bottom + gap, maximumTop),
   };
 }
+
+export function trafficPointerTooltipPosition(
+  pointerX: number,
+  pointerY: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  tooltipWidth = 176,
+  tooltipHeight = 64,
+  gap = 8,
+) {
+  const maximumLeft = Math.max(gap, viewportWidth - tooltipWidth - gap);
+  const maximumTop = Math.max(gap, viewportHeight - tooltipHeight - gap);
+  const fitsOnRight =
+    pointerX + gap + tooltipWidth <= viewportWidth - gap;
+  const preferredLeft = fitsOnRight
+    ? pointerX + gap
+    : pointerX - tooltipWidth - gap;
+
+  return {
+    left: clamp(preferredLeft, gap, maximumLeft),
+    top: clamp(pointerY - tooltipHeight / 2, gap, maximumTop),
+  };
+}

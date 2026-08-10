@@ -34,6 +34,7 @@ export type WireGuardInterface = {
   listenPort?: number;
   dns: string[];
   mtu?: number;
+  tcpMSSClamping: boolean;
   clientEndpoint: string;
   clientAllowedIPs: string[];
   peers: WireGuardPeer[];
@@ -202,6 +203,7 @@ export const blankInterface = (): InterfaceInput => ({
   listenPort: undefined,
   dns: [],
   mtu: undefined,
+  tcpMSSClamping: false,
   clientEndpoint: "",
   clientAllowedIPs: [],
 });
@@ -448,6 +450,7 @@ export function interfaceToInput(config: WireGuardInterface): InterfaceInput {
     listenPort: config.listenPort,
     dns: [...config.dns],
     mtu: config.mtu,
+    tcpMSSClamping: config.tcpMSSClamping,
     clientEndpoint: config.clientEndpoint,
     clientAllowedIPs: [...config.clientAllowedIPs],
   };

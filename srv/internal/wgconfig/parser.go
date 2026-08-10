@@ -12,6 +12,11 @@ import (
 	"wireguard-panel/internal/model"
 )
 
+const (
+	tcpMSSClampingPostUp  = `MSS=1340; iptables -t mangle -I FORWARD 1 -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"; iptables -t mangle -I FORWARD 1 -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"`
+	tcpMSSClampingPreDown = `MSS=1340; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true`
+)
+
 func Parse(id string, filename string, data []byte) (model.Interface, error) {
 	config := model.Interface{
 		ID:               id,
@@ -92,7 +97,9 @@ func Parse(id string, filename string, data []byte) (model.Interface, error) {
 		var err error
 		switch section {
 		case "interface":
-			if isUnmanagedInterfaceField(key) {
+			if isTCPMSSClampingDirective(key, value) {
+				config.TCPMSSClamping = true
+			} else if isUnmanagedInterfaceField(key) {
 				config.UnmanagedInterfaceLines = append(
 					config.UnmanagedInterfaceLines,
 					sourceLine,
@@ -160,6 +167,10 @@ func Serialize(config model.Interface) ([]byte, error) {
 	writeList(&output, "DNS", config.DNS)
 	if config.MTU != nil {
 		writeField(&output, "MTU", strconv.Itoa(*config.MTU))
+	}
+	if config.TCPMSSClamping {
+		writeField(&output, "PostUp", tcpMSSClampingPostUp)
+		writeField(&output, "PreDown", tcpMSSClampingPreDown)
 	}
 	for _, line := range config.UnmanagedInterfaceLines {
 		output.WriteString(line)
@@ -382,6 +393,11 @@ func isUnmanagedInterfaceField(key string) bool {
 		strings.EqualFold(key, "SaveConfig")
 }
 
+func isTCPMSSClampingDirective(key string, value string) bool {
+	return (strings.EqualFold(key, "PostUp") && value == tcpMSSClampingPostUp) ||
+		(strings.EqualFold(key, "PreDown") && value == tcpMSSClampingPreDown)
+}
+
 func parsePeerField(peer *model.Peer, key string, value string) error {
 	switch {
 	case strings.EqualFold(key, "PublicKey"):
@@ -491,6 +507,7 @@ func interfaceInput(config model.Interface) model.InterfaceInput {
 		ListenPort:       config.ListenPort,
 		DNS:              config.DNS,
 		MTU:              config.MTU,
+		TCPMSSClamping:   config.TCPMSSClamping,
 		ClientEndpoint:   config.ClientEndpoint,
 		ClientAllowedIPs: config.ClientAllowedIPs,
 	}
@@ -502,6 +519,7 @@ func applyInterfaceInput(config *model.Interface, input model.InterfaceInput) {
 	config.ListenPort = input.ListenPort
 	config.DNS = input.DNS
 	config.MTU = input.MTU
+	config.TCPMSSClamping = input.TCPMSSClamping
 	config.ClientEndpoint = input.ClientEndpoint
 	config.ClientAllowedIPs = input.ClientAllowedIPs
 }

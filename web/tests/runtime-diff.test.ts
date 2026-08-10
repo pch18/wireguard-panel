@@ -17,6 +17,7 @@ const interfaceConfig = {
   listenPort: 51820,
   dns: ["1.1.1.1"],
   mtu: 1420,
+  tcpMSSClamping: false,
   clientEndpoint: "old.example.com:51820",
   clientAllowedIPs: ["10.0.0.0/8"],
   peers: [],
@@ -112,6 +113,14 @@ test("Interface impact distinguishes hot updates from required restart", () => {
     { ...interfaceConfig, mtu: 1380 },
   );
   assert.equal(fromAutomaticMTU.mode, "hot");
+
+  const tcpMSSClamping = analyzeInterfaceChange(interfaceConfig, {
+    ...interfaceConfig,
+    tcpMSSClamping: true,
+  });
+  assert.equal(tcpMSSClamping.mode, "restart");
+  assert.equal(tcpMSSClamping.requiresConfirmation, true);
+  assert.match(tcpMSSClamping.changes[0] ?? "", /MSS 1340/);
 });
 
 test("default route changes require Interface restart", () => {

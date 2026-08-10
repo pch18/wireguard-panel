@@ -93,6 +93,12 @@ export function analyzeInterfaceChange(
       changes.push("MTU：将在线更新链路 MTU；不合适的值可能导致部分流量不可达。");
     }
   }
+  if (current.tcpMSSClamping !== next.tcpMSSClamping) {
+    mode = "restart";
+    changes.push(
+      `TCP MSS 钳制：保存时会重启 Interface，并${next.tcpMSSClamping ? "添加" : "移除"}双向 MSS 1340 规则。`,
+    );
+  }
 
   return {
     mode,

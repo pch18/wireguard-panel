@@ -38,6 +38,7 @@ export function interfaceMatchesInput(
     config.listenPort === input.listenPort &&
     sameList(config.dns, input.dns) &&
     config.mtu === input.mtu &&
+    config.tcpMSSClamping === input.tcpMSSClamping &&
     config.clientEndpoint === input.clientEndpoint.trim() &&
     sameList(config.clientAllowedIPs, input.clientAllowedIPs)
   );

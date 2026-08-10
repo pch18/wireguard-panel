@@ -17,6 +17,7 @@ const interfaceInput: InterfaceInput = {
   listenPort: 51820,
   dns: ["1.1.1.1", "8.8.8.8"],
   mtu: 1420,
+  tcpMSSClamping: false,
   clientEndpoint: "vpn.example.com:51820",
   clientAllowedIPs: ["10.0.0.0/8"],
 };
@@ -42,6 +43,13 @@ test("reconciliation recognizes a normalized Interface mutation", () => {
   );
   assert.equal(
     interfaceMatchesInput(config, { ...interfaceInput, mtu: 1380 }),
+    false,
+  );
+  assert.equal(
+    interfaceMatchesInput(config, {
+      ...interfaceInput,
+      tcpMSSClamping: true,
+    }),
     false,
   );
 });

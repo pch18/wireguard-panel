@@ -4,6 +4,7 @@ import type { TrafficPoint } from "./api";
 import {
   trafficPlotPosition,
   trafficPointAtTimestamp,
+  trafficPointerTooltipPosition,
   trafficTimestampAtPosition,
   trafficTooltipPosition,
 } from "./trafficHover";
@@ -227,14 +228,25 @@ export default function TrafficChart({
         trafficSampleIntervalMilliseconds / 2,
       ),
     );
-    const chartBounds =
-      event.currentTarget
-        .closest(".peer-card, .modal.is-traffic, .traffic-chart")
-        ?.getBoundingClientRect() ??
-      bounds;
+    if (compact) {
+      const chartBounds =
+        event.currentTarget
+          .closest(".peer-card, .modal.is-traffic, .traffic-chart")
+          ?.getBoundingClientRect() ??
+        bounds;
+      setTooltipPosition(
+        trafficTooltipPosition(
+          chartBounds,
+          event.clientY,
+          window.innerWidth,
+          window.innerHeight,
+        ),
+      );
+      return;
+    }
     setTooltipPosition(
-      trafficTooltipPosition(
-        chartBounds,
+      trafficPointerTooltipPosition(
+        event.clientX,
         event.clientY,
         window.innerWidth,
         window.innerHeight,

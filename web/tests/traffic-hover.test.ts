@@ -4,6 +4,7 @@ import {
   nearestTrafficPoint,
   trafficPlotPosition,
   trafficPointAtTimestamp,
+  trafficPointerTooltipPosition,
   trafficTimestampAtPosition,
   trafficTooltipPosition,
 } from "../src/features/wireguard/trafficHover.ts";
@@ -99,5 +100,20 @@ test("traffic tooltip is placed outside the chart bounds", () => {
       600,
     ),
     { left: 62, top: 28 },
+  );
+});
+
+test("large traffic tooltip follows the pointer and flips at viewport edges", () => {
+  assert.deepEqual(
+    trafficPointerTooltipPosition(400, 160, 800, 600),
+    { left: 408, top: 128 },
+  );
+  assert.deepEqual(
+    trafficPointerTooltipPosition(700, 160, 800, 600),
+    { left: 516, top: 128 },
+  );
+  assert.deepEqual(
+    trafficPointerTooltipPosition(2, 20, 800, 600),
+    { left: 10, top: 8 },
   );
 });

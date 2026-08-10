@@ -1,6 +1,7 @@
 package wgconfig
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -195,6 +196,46 @@ func TestConfirmedRestartUsesOldFileForDownAndNewFileForUp(t *testing.T) {
 	}
 	if len(tunnels.upConfigs) != 1 || !reflect.DeepEqual(tunnels.upConfigs[0], stored) {
 		t.Fatalf("Up did not see the new file:\n%s", tunnels.upConfigs[0])
+	}
+}
+
+func TestTCPMSSClampingToggleAppliesThroughConfirmedRestart(t *testing.T) {
+	store, config, input := createRunningTestInterface(t)
+	tunnels := testTunnel(store, true)
+	input.TCPMSSClamping = true
+
+	enabled, err := store.UpdateApplied(
+		context.Background(), config.ID, config.Revision, input, tunnels, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tunnels.downConfigs) != 1 ||
+		bytes.Contains(tunnels.downConfigs[0], []byte(tcpMSSClampingPostUp)) {
+		t.Fatal("enabling clamping did not tear down with the old unclamped config")
+	}
+	if len(tunnels.upConfigs) != 1 ||
+		!bytes.Contains(tunnels.upConfigs[0], []byte(tcpMSSClampingPostUp)) ||
+		!bytes.Contains(tunnels.upConfigs[0], []byte(tcpMSSClampingPreDown)) {
+		t.Fatalf("enabling clamping did not start with both managed hooks:\n%s", tunnels.upConfigs[0])
+	}
+
+	tunnels.downConfigs = nil
+	tunnels.upConfigs = nil
+	input.TCPMSSClamping = false
+	if _, err := store.UpdateApplied(
+		context.Background(), enabled.ID, enabled.Revision, input, tunnels, true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(tunnels.downConfigs) != 1 ||
+		!bytes.Contains(tunnels.downConfigs[0], []byte(tcpMSSClampingPreDown)) {
+		t.Fatal("disabling clamping did not tear down with the old cleanup hook")
+	}
+	if len(tunnels.upConfigs) != 1 ||
+		bytes.Contains(tunnels.upConfigs[0], []byte(tcpMSSClampingPostUp)) ||
+		bytes.Contains(tunnels.upConfigs[0], []byte(tcpMSSClampingPreDown)) {
+		t.Fatalf("disabling clamping restarted with managed hooks still present:\n%s", tunnels.upConfigs[0])
 	}
 }
 

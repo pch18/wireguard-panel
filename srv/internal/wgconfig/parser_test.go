@@ -123,6 +123,57 @@ PersistentKeepalive = 25
 	}
 }
 
+func TestTCPMSSClampingDirectivesAreManagedAsOneInterfaceOption(t *testing.T) {
+	source := fmt.Sprintf(`[Interface]
+PrivateKey = %s
+Address = 10.20.0.1/24
+PostUp = %s
+PreDown = %s
+PostUp = echo keep-custom-hook
+`, testPrivateKey(t), tcpMSSClampingPostUp, tcpMSSClampingPreDown)
+
+	config, err := Parse("wg0", "wg0.conf", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.TCPMSSClamping {
+		t.Fatal("TCP MSS clamping directives did not enable the managed option")
+	}
+	if !reflect.DeepEqual(
+		config.UnmanagedInterfaceLines,
+		[]string{"PostUp = echo keep-custom-hook"},
+	) {
+		t.Fatalf("managed directives leaked into unmanaged lines: %#v", config.UnmanagedInterfaceLines)
+	}
+
+	serialized, err := Serialize(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"PostUp = " + tcpMSSClampingPostUp,
+		"PreDown = " + tcpMSSClampingPreDown,
+		"PostUp = echo keep-custom-hook",
+	} {
+		if strings.Count(string(serialized), line+"\n") != 1 {
+			t.Fatalf("serialized config does not contain exactly one %q:\n%s", line, serialized)
+		}
+	}
+
+	config.TCPMSSClamping = false
+	disabled, err := Serialize(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(disabled, []byte(tcpMSSClampingPostUp)) ||
+		bytes.Contains(disabled, []byte(tcpMSSClampingPreDown)) {
+		t.Fatalf("disabled TCP MSS clamping was still serialized:\n%s", disabled)
+	}
+	if !bytes.Contains(disabled, []byte("PostUp = echo keep-custom-hook\n")) {
+		t.Fatalf("custom hook disappeared while disabling clamping:\n%s", disabled)
+	}
+}
+
 func TestSerializeSeparatesPanelMetadataFromInterfaceSection(t *testing.T) {
 	config := model.Interface{
 		PrivateKey:       testPrivateKey(t),

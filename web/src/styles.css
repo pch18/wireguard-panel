@@ -3101,6 +3101,16 @@ svg {
   padding: 0.7rem;
 }
 
+.tcp-mss-clamping-field {
+  padding-top: 0.1rem;
+  border-top: 1px solid #dcebe5;
+}
+
+.tcp-mss-clamping-field .toggle {
+  width: fit-content;
+  min-height: 2rem;
+}
+
 .interface-modal-form .mtu-probe-button {
   min-height: auto;
   padding: 0;
@@ -4060,7 +4070,10 @@ svg {
 .peer-runtime-dot.is-active::after,
 .peer-runtime-dot.is-offline::after {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
   border-radius: inherit;
   content: "";
   pointer-events: none;
@@ -4091,13 +4104,13 @@ svg {
 @keyframes peer-status-halo {
   0% {
     opacity: 0.72;
-    transform: scale(0.9);
+    transform: translate(-50%, -50%) scale(0.9);
   }
 
   72%,
   100% {
     opacity: 0;
-    transform: scale(2.9);
+    transform: translate(-50%, -50%) scale(2.9);
   }
 }
 
@@ -5065,10 +5078,9 @@ svg {
 .peer-count.is-offline::after {
   position: absolute;
   top: 50%;
-  left: 0;
+  left: 0.21rem;
   width: 0.42rem;
   height: 0.42rem;
-  margin-top: -0.21rem;
   border: 1px solid rgb(35 168 117 / 72%);
   border-radius: 50%;
   box-shadow: 0 0 0.42rem rgb(35 168 117 / 34%);
@@ -5279,12 +5291,15 @@ svg {
   height: 0.76rem;
   flex: none;
   stroke-width: 2;
-  transform: translateY(0.04rem);
 }
 
 .peer-card-handshake-time {
+  display: inline-flex;
+  height: 0.76rem;
+  align-items: center;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-variant-numeric: tabular-nums;
+  line-height: 0.76rem;
 }
 
 .peer-card-public-key,

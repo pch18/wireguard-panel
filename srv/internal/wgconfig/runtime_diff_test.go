@@ -66,6 +66,12 @@ func TestRuntimeChangeClassification(t *testing.T) {
 		t.Fatalf("DNS change classified as %v", got)
 	}
 
+	tcpMSSClamping := base
+	tcpMSSClamping.TCPMSSClamping = true
+	if got := classifyRuntimeChange(base, tcpMSSClamping); got != runtimeRestartRequired {
+		t.Fatalf("TCP MSS clamping change classified as %v", got)
+	}
+
 	wgQuickDirective := base
 	wgQuickDirective.UnmanagedInterfaceLines = []string{"PostUp = nft add rule ..."}
 	if got := classifyRuntimeChange(base, wgQuickDirective); got != runtimeRestartRequired {

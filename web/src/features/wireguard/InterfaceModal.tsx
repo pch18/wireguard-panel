@@ -418,6 +418,25 @@ export default function InterfaceModal({
                 </small>
               )}
             </div>
+            <div className="field is-full tcp-mss-clamping-field">
+              <span className="field-label">TCP MSS 钳制</span>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={input.tcpMSSClamping}
+                  onChange={(event) =>
+                    setInput((current) => ({
+                      ...current,
+                      tcpMSSClamping: event.target.checked,
+                    }))
+                  }
+                />
+                <span aria-hidden="true" />
+                <span>
+                  将经过此 Interface 的双向 TCP SYN 报文 MSS 固定为 1340
+                </span>
+              </label>
+            </div>
           </div>
         </section>
 
