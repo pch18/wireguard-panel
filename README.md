@@ -229,7 +229,7 @@ SameSite 保护，但不会设置 Secure 属性。
 ## Alpine 一键安装
 
 Release 提供静态链接的 Linux AMD64 安装包。目标主机需要是使用 OpenRC 的 Alpine
-Linux AMD64，并提前准备好 WireGuard 运行环境。以 root 执行：
+Linux AMD64。安装器会自动补齐 WireGuard 基础依赖，以 root 执行：
 
 ```sh
 wget -qO- \
@@ -239,6 +239,7 @@ wget -qO- \
 
 安装器会：
 
+- 安装 `wireguard-tools`、`iproute2` 和 `iptables`；
 - 从 GitHub Latest Release 下载 `wireguard-panel_linux_amd64.tar.gz`；
 - 安装二进制到 `/usr/local/bin/wireguard-panel`；
 - 写入 `/etc/init.d/wireguard-panel`，固定以 root 运行；
