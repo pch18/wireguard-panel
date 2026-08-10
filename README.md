@@ -232,7 +232,7 @@ SameSite 保护，但不会设置 Secure 属性。
 
 Release 提供静态链接的 Linux AMD64 安装包及 SHA-256 校验文件。目标主机需要是
 使用 OpenRC 的 Alpine Linux AMD64，并已安装 `curl`；安装器会自动补齐
-`wireguard-tools` 和 `iproute2`。以 root 执行：
+`wireguard-tools`、`iproute2` 和 `iptables`。以 root 执行：
 
 ```bash
 curl -fsSL \
@@ -242,7 +242,7 @@ curl -fsSL \
 
 安装器会：
 
-- 安装缺失的 `wireguard-tools` 和 `iproute2`；
+- 安装缺失的 `wireguard-tools`、`iproute2` 和 `iptables`；
 - 立即启用 IPv4 转发，并在内核支持 IPv6 时同时启用 IPv6 转发；转发设置写入
   `/etc/sysctl.d/99-wireguard-panel-forwarding.conf`，由 OpenRC 在启动时恢复；
 - 从 GitHub Latest Release 下载 `wireguard-panel_linux_amd64.tar.gz`；

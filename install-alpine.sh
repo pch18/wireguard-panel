@@ -31,7 +31,7 @@ for command in apk curl sha256sum tar install cp mv rc-update rc-service; do
 done
 
 missing_packages=""
-for package in wireguard-tools iproute2; do
+for package in wireguard-tools iproute2 iptables; do
   if ! apk info -e "$package" >/dev/null 2>&1; then
     missing_packages="${missing_packages} ${package}"
   fi
@@ -43,7 +43,7 @@ if [ -n "$missing_packages" ]; then
   apk add --no-cache $missing_packages
 fi
 
-for command in wg wg-quick ip sysctl; do
+for command in wg wg-quick ip iptables sysctl; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 

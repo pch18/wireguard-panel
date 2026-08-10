@@ -45,6 +45,12 @@ set -eu
 panel_port="$1"
 [ -f /etc/alpine-release ]
 [ "$(uname -m)" = "x86_64" ]
+for command in curl wg wg-quick ip iptables; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'Required command is unavailable: %s\n' "$command" >&2
+    exit 1
+  }
+done
 rc-service wireguard-panel status
 rc-update show default | grep -q wireguard-panel
 ss -lnt | grep -q ":${panel_port}"
@@ -83,7 +89,7 @@ panel_port="$2"
 [ "$(uname -m)" = "x86_64" ]
 
 missing_packages=""
-for package in curl wireguard-tools iproute2; do
+for package in curl wireguard-tools iproute2 iptables; do
   if ! apk info -e "$package" >/dev/null 2>&1; then
     missing_packages="${missing_packages} ${package}"
   fi
@@ -92,6 +98,13 @@ if [ -n "$missing_packages" ]; then
   # Package names are selected from the fixed list above.
   apk add --no-cache $missing_packages
 fi
+
+for command in curl wg wg-quick ip iptables; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'Required command is unavailable after dependency installation: %s\n' "$command" >&2
+    exit 1
+  }
+done
 
 installer_path="$(mktemp /tmp/wireguard-panel-install.XXXXXX)"
 pinned_installer_path="${installer_path}.pinned"
