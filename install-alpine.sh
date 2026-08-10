@@ -22,13 +22,38 @@ fail() {
   exit 1
 }
 
+download_file() {
+  download_url="$1"
+  download_destination="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$download_url" -o "$download_destination"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$download_destination" "$download_url"
+  else
+    fail "curl or wget is required"
+  fi
+}
+
+health_request() {
+  health_url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 2 "$health_url" >/dev/null 2>&1
+  else
+    wget -q -T 2 -O /dev/null "$health_url" >/dev/null 2>&1
+  fi
+}
+
 [ "$(id -u)" -eq 0 ] || fail "must run as root"
 [ -f /etc/alpine-release ] || fail "only Alpine Linux is supported"
 [ "$(uname -m)" = "x86_64" ] || fail "only Linux AMD64 is supported"
 
-for command in apk curl sha256sum tar install cp mv rc-update rc-service; do
+for command in apk sha256sum tar install cp mv rc-update rc-service; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
+if ! command -v curl >/dev/null 2>&1 && \
+  ! command -v wget >/dev/null 2>&1; then
+  fail "curl or wget is required"
+fi
 
 missing_packages=""
 for package in wireguard-tools iproute2 iptables; do
@@ -73,8 +98,10 @@ if ! rc-update add sysctl boot >/dev/null; then
 fi
 
 printf 'Downloading WireGuard Panel...\n'
-curl -fsSL "${release}/${asset}" -o "${temporary_directory}/${asset}"
-curl -fsSL "${release}/${asset}.sha256" -o "${temporary_directory}/${asset}.sha256"
+download_file "${release}/${asset}" "${temporary_directory}/${asset}"
+download_file \
+  "${release}/${asset}.sha256" \
+  "${temporary_directory}/${asset}.sha256"
 
 (
   cd "$temporary_directory"
@@ -118,8 +145,7 @@ esac
 
 panel_is_healthy() {
   rc-service wireguard-panel status >/dev/null 2>&1 &&
-    curl -fsS --max-time 2 \
-      "http://127.0.0.1:${panel_port}/api/health" >/dev/null 2>&1
+    health_request "http://127.0.0.1:${panel_port}/api/health"
 }
 
 wait_for_panel() {
