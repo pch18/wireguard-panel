@@ -3,19 +3,9 @@
 set -eu
 
 asset="wireguard-panel_linux_amd64.tar.gz"
-release_tag="${WIREGUARD_PANEL_RELEASE_TAG:-}"
-if [ -n "$release_tag" ] && ! printf '%s\n' "$release_tag" | \
-  grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-  printf 'wireguard-panel installer: invalid release tag: %s\n' "$release_tag" >&2
-  exit 1
-fi
-if [ -n "$release_tag" ]; then
-  release="https://github.com/pch18/wireguard-panel/releases/download/${release_tag}"
-else
-  release="https://github.com/pch18/wireguard-panel/releases/latest/download"
-fi
 binary="/usr/local/bin/wireguard-panel"
 service="/etc/init.d/wireguard-panel"
+release_tag="${WIREGUARD_PANEL_RELEASE_TAG:-}"
 
 fail() {
   printf 'wireguard-panel installer: %s\n' "$*" >&2
@@ -23,54 +13,82 @@ fail() {
 }
 
 download_file() {
-  download_url="$1"
-  download_destination="$2"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$download_url" -o "$download_destination"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$download_destination" "$download_url"
+  if [ "$http_client" = curl ]; then
+    curl -fsSL "$1" -o "$2"
   else
-    fail "curl or wget is required"
+    wget -qO "$2" "$1"
   fi
 }
 
 health_request() {
-  health_url="$1"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 2 "$health_url" >/dev/null 2>&1
+  if [ "$http_client" = curl ]; then
+    curl -fsS --max-time 2 "$1" >/dev/null 2>&1
   else
-    wget -q -T 2 -O /dev/null "$health_url" >/dev/null 2>&1
+    wget -q -T 2 -O /dev/null "$1" >/dev/null 2>&1
   fi
 }
 
+wait_for_panel() {
+  attempt=0
+  until rc-service wireguard-panel status >/dev/null 2>&1 &&
+    health_request "http://127.0.0.1:${panel_port}/api/health"; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] || return 1
+    sleep 1
+  done
+}
+
+restore_file() {
+  if [ -f "$1" ]; then
+    install -m 0755 "$1" "$2"
+  else
+    rm -f "$2"
+  fi
+}
+
+rollback() {
+  reason="$1"
+  rc-service wireguard-panel stop >/dev/null 2>&1 || true
+  restore_file "$previous_binary" "$binary"
+  restore_file "$previous_service" "$service"
+  if [ "$was_enabled" = true ]; then
+    rc-update add wireguard-panel default >/dev/null 2>&1 || true
+  else
+    rc-update del wireguard-panel default >/dev/null 2>&1 || true
+  fi
+
+  if [ "$was_running" = true ]; then
+    if rc-service wireguard-panel start >/dev/null 2>&1 && wait_for_panel; then
+      fail "$reason; the previous panel was restored and is healthy"
+    fi
+    fail "$reason; restoring the previous panel did not recover a healthy service"
+  fi
+  fail "$reason; the previous stopped or uninstalled state was restored"
+}
+
+# Validate the host and select its available HTTP client.
 [ "$(id -u)" -eq 0 ] || fail "must run as root"
 [ -f /etc/alpine-release ] || fail "only Alpine Linux is supported"
 [ "$(uname -m)" = "x86_64" ] || fail "only Linux AMD64 is supported"
-
-for command in apk sha256sum tar install cp mv rc-update rc-service; do
-  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
-done
-if ! command -v curl >/dev/null 2>&1 && \
-  ! command -v wget >/dev/null 2>&1; then
+if command -v curl >/dev/null 2>&1; then
+  http_client=curl
+elif command -v wget >/dev/null 2>&1; then
+  http_client=wget
+else
   fail "curl or wget is required"
 fi
 
-missing_packages=""
-for package in wireguard-tools iproute2 iptables; do
-  if ! apk info -e "$package" >/dev/null 2>&1; then
-    missing_packages="${missing_packages} ${package}"
-  fi
-done
-if [ -n "$missing_packages" ]; then
-  printf 'Installing WireGuard dependencies...\n'
-  # Package names are selected from the fixed list above.
-  # shellcheck disable=SC2086
-  apk add --no-cache $missing_packages
+if [ -n "$release_tag" ]; then
+  printf '%s\n' "$release_tag" | \
+    grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || fail "invalid release tag: $release_tag"
+  release_url="https://github.com/pch18/wireguard-panel/releases/download/${release_tag}"
+else
+  release_url="https://github.com/pch18/wireguard-panel/releases/latest/download"
 fi
 
-for command in wg wg-quick ip iptables sysctl; do
-  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
-done
+# Install the complete runtime rather than branching on each package.
+printf 'Installing WireGuard dependencies...\n'
+apk add --no-cache wireguard-tools iproute2 iptables
 
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
@@ -90,18 +108,14 @@ install -d -m 0755 /etc/sysctl.d
 install -m 0644 \
   "${temporary_directory}/wireguard-panel-forwarding.conf" \
   "$forwarding_config"
-if ! sysctl -p "$forwarding_config" >/dev/null; then
-  fail "IP forwarding could not be enabled"
-fi
-if ! rc-update add sysctl boot >/dev/null; then
-  fail "the sysctl service could not be enabled at boot"
+if ! sysctl -p "$forwarding_config" >/dev/null ||
+  ! rc-update add sysctl boot >/dev/null; then
+  fail "IP forwarding could not be enabled and persisted"
 fi
 
 printf 'Downloading WireGuard Panel...\n'
-download_file "${release}/${asset}" "${temporary_directory}/${asset}"
-download_file \
-  "${release}/${asset}.sha256" \
-  "${temporary_directory}/${asset}.sha256"
+download_file "${release_url}/${asset}" "${temporary_directory}/${asset}"
+download_file "${release_url}/${asset}.sha256" "${temporary_directory}/${asset}.sha256"
 
 (
   cd "$temporary_directory"
@@ -109,31 +123,25 @@ download_file \
 )
 tar -xzf "${temporary_directory}/${asset}" -C "$temporary_directory"
 
-had_previous_binary=false
-if [ -f "$binary" ]; then
-  cp -p "$binary" "${temporary_directory}/wireguard-panel.previous"
-  had_previous_binary=true
-fi
-had_previous_service=false
-if [ -f "$service" ]; then
-  cp -p "$service" "${temporary_directory}/wireguard-panel.openrc.previous"
-  had_previous_service=true
-fi
-had_previous_default=false
+# Snapshot the existing installation so any failed upgrade can be rolled back.
+previous_binary="${temporary_directory}/previous-binary"
+previous_service="${temporary_directory}/previous-service"
+[ ! -f "$binary" ] || cp -p "$binary" "$previous_binary"
+[ ! -f "$service" ] || cp -p "$service" "$previous_service"
+
+was_enabled=false
 if rc-update show default 2>/dev/null | \
   grep -Eq '(^|[[:space:]])wireguard-panel([[:space:]]|$)'; then
-  had_previous_default=true
+  was_enabled=true
 fi
-had_previous_running=false
-if [ "$had_previous_service" = true ] && \
+was_running=false
+if [ -f "$previous_service" ] && \
   rc-service wireguard-panel status >/dev/null 2>&1; then
-  had_previous_running=true
+  was_running=true
 fi
 
 panel_port=5555
 if [ -r /etc/conf.d/wireguard-panel ]; then
-  # OpenRC sources this root-owned file before starting the service. Source the
-  # same file so the health check verifies the port the process actually uses.
   APP_PORT=""
   # shellcheck disable=SC1091
   . /etc/conf.d/wireguard-panel
@@ -142,50 +150,6 @@ fi
 case "$panel_port" in
   ''|*[!0-9]*) fail "APP_PORT must be numeric" ;;
 esac
-
-panel_is_healthy() {
-  rc-service wireguard-panel status >/dev/null 2>&1 &&
-    health_request "http://127.0.0.1:${panel_port}/api/health"
-}
-
-wait_for_panel() {
-  attempt=0
-  while ! panel_is_healthy; do
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 10 ] || return 1
-    sleep 1
-  done
-}
-
-rollback_installation() {
-  reason="$1"
-  rc-service wireguard-panel stop >/dev/null 2>&1 || true
-
-  if [ "$had_previous_binary" = true ]; then
-    install -m 0755 "${temporary_directory}/wireguard-panel.previous" "$binary"
-  else
-    rm -f "$binary"
-  fi
-  if [ "$had_previous_service" = true ]; then
-    install -m 0755 \
-      "${temporary_directory}/wireguard-panel.openrc.previous" "$service"
-  else
-    rm -f "$service"
-  fi
-  if [ "$had_previous_default" = true ]; then
-    rc-update add wireguard-panel default >/dev/null 2>&1 || true
-  else
-    rc-update del wireguard-panel default >/dev/null 2>&1 || true
-  fi
-
-  if [ "$had_previous_running" = true ]; then
-    if rc-service wireguard-panel start >/dev/null 2>&1 && wait_for_panel; then
-      fail "$reason; the previous panel was restored and is healthy"
-    fi
-    fail "$reason; restoring the previous panel did not recover a healthy service"
-  fi
-  fail "$reason; the previous stopped or uninstalled state was restored"
-}
 
 install -m 0755 "${temporary_directory}/wireguard-panel" "${binary}.new"
 mv "${binary}.new" "$binary"
@@ -209,14 +173,10 @@ depend() {
 OPENRC
 install -m 0755 "${temporary_directory}/wireguard-panel.openrc" "$service"
 
-if ! rc-update add wireguard-panel default >/dev/null; then
-  rollback_installation "the panel could not be registered with OpenRC"
-fi
-if ! rc-service wireguard-panel restart; then
-  rollback_installation "the new panel failed to start"
-fi
-if ! wait_for_panel; then
-  rollback_installation "the new panel started but did not become healthy"
+if ! rc-update add wireguard-panel default >/dev/null ||
+  ! rc-service wireguard-panel restart ||
+  ! wait_for_panel; then
+  rollback "the new panel could not be enabled, started, or verified"
 fi
 
 printf '\nWireGuard Panel installed: http://SERVER_IP:%s\n' "$panel_port"
