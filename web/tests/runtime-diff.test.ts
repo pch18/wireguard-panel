@@ -120,7 +120,7 @@ test("Interface impact distinguishes hot updates from required restart", () => {
   });
   assert.equal(tcpMSSClamping.mode, "restart");
   assert.equal(tcpMSSClamping.requiresConfirmation, true);
-  assert.match(tcpMSSClamping.changes[0] ?? "", /MSS 1340/);
+  assert.match(tcpMSSClamping.changes[0] ?? "", /MTU - 40/);
 });
 
 test("default route changes require Interface restart", () => {

@@ -433,7 +433,7 @@ export default function InterfaceModal({
                 />
                 <span aria-hidden="true" />
                 <span>
-                  将经过此 Interface 的双向 TCP SYN 报文 MSS 固定为 1340
+                  将经过此 Interface 的双向 TCP SYN 报文 MSS 设为当前 MTU - 40
                 </span>
               </label>
             </div>

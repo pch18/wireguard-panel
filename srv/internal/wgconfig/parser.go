@@ -13,8 +13,12 @@ import (
 )
 
 const (
-	tcpMSSClampingPostUp  = `MSS=1340; iptables -t mangle -I FORWARD 1 -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"; iptables -t mangle -I FORWARD 1 -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"`
-	tcpMSSClampingPreDown = `MSS=1340; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true`
+	tcpMSSClampingPostUp  = `MSS="$(($(cat /sys/class/net/%i/mtu) - 40))"; iptables -t mangle -I FORWARD 1 -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"; iptables -t mangle -I FORWARD 1 -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"`
+	tcpMSSClampingPreDown = `MSS="$(($(cat /sys/class/net/%i/mtu) - 40))"; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true`
+
+	// 兼容已经由旧版本写入的固定 MSS 1340 规则；重新保存后会迁移为动态规则。
+	legacyTCPMSSClampingPostUp  = `MSS=1340; iptables -t mangle -I FORWARD 1 -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"; iptables -t mangle -I FORWARD 1 -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS"`
+	legacyTCPMSSClampingPreDown = `MSS=1340; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" 2>/dev/null || true`
 )
 
 func Parse(id string, filename string, data []byte) (model.Interface, error) {
@@ -394,8 +398,10 @@ func isUnmanagedInterfaceField(key string) bool {
 }
 
 func isTCPMSSClampingDirective(key string, value string) bool {
-	return (strings.EqualFold(key, "PostUp") && value == tcpMSSClampingPostUp) ||
-		(strings.EqualFold(key, "PreDown") && value == tcpMSSClampingPreDown)
+	return (strings.EqualFold(key, "PostUp") &&
+		(value == tcpMSSClampingPostUp || value == legacyTCPMSSClampingPostUp)) ||
+		(strings.EqualFold(key, "PreDown") &&
+			(value == tcpMSSClampingPreDown || value == legacyTCPMSSClampingPreDown))
 }
 
 func parsePeerField(peer *model.Peer, key string, value string) error {

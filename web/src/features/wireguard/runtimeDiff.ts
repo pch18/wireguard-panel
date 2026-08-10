@@ -96,7 +96,7 @@ export function analyzeInterfaceChange(
   if (current.tcpMSSClamping !== next.tcpMSSClamping) {
     mode = "restart";
     changes.push(
-      `TCP MSS 钳制：保存时会重启 Interface，并${next.tcpMSSClamping ? "添加" : "移除"}双向 MSS 1340 规则。`,
+      `TCP MSS 钳制：保存时会重启 Interface，并${next.tcpMSSClamping ? "添加" : "移除"}双向 MTU - 40 规则。`,
     );
   }
 

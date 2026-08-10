@@ -124,6 +124,11 @@ PersistentKeepalive = 25
 }
 
 func TestTCPMSSClampingDirectivesAreManagedAsOneInterfaceOption(t *testing.T) {
+	if !strings.Contains(tcpMSSClampingPostUp, `/sys/class/net/%i/mtu) - 40`) ||
+		!strings.Contains(tcpMSSClampingPreDown, `/sys/class/net/%i/mtu) - 40`) {
+		t.Fatal("TCP MSS clamping does not derive MSS from the current Interface MTU")
+	}
+
 	source := fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = 10.20.0.1/24
@@ -171,6 +176,35 @@ PostUp = echo keep-custom-hook
 	}
 	if !bytes.Contains(disabled, []byte("PostUp = echo keep-custom-hook\n")) {
 		t.Fatalf("custom hook disappeared while disabling clamping:\n%s", disabled)
+	}
+}
+
+func TestLegacyTCPMSSClampingMigratesToCurrentMTURules(t *testing.T) {
+	source := fmt.Sprintf(`[Interface]
+PrivateKey = %s
+PostUp = %s
+PreDown = %s
+`, testPrivateKey(t), legacyTCPMSSClampingPostUp, legacyTCPMSSClampingPreDown)
+
+	config, err := Parse("wg0", "wg0.conf", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.TCPMSSClamping {
+		t.Fatal("legacy TCP MSS clamping directives did not enable the managed option")
+	}
+
+	serialized, err := Serialize(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(serialized, []byte(legacyTCPMSSClampingPostUp)) ||
+		bytes.Contains(serialized, []byte(legacyTCPMSSClampingPreDown)) {
+		t.Fatalf("legacy fixed MSS rules were not migrated:\n%s", serialized)
+	}
+	if !bytes.Contains(serialized, []byte(tcpMSSClampingPostUp)) ||
+		!bytes.Contains(serialized, []byte(tcpMSSClampingPreDown)) {
+		t.Fatalf("current MTU-based MSS rules were not serialized:\n%s", serialized)
 	}
 }
 
