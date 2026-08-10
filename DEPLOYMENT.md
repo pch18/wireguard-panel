@@ -53,8 +53,8 @@ git config wireguard-panel.deployPanelPort 5555
 脚本会完成以下工作：
 
 - 通过已知主机密钥和 `BatchMode` SSH 登录，不关闭主机密钥校验；
-- 核对 Alpine Linux AMD64，并补齐 `curl`、`wireguard-tools`、`iproute2`、`iptables`，
-  随后校验 WireGuard 及防火墙命令均可用；
+- 使用 `wget` 获取 Release 和执行健康检查；核对 Alpine Linux AMD64，并补齐
+  `wireguard-tools`、`iproute2`、`iptables`，随后校验 WireGuard 及防火墙命令均可用；
 - 下载指定标签中的安装器，并将旧版安装器的 Latest URL 固定到目标标签，再下载、校验
   同版本 Release 资产；
 - 安装或升级 OpenRC 服务；安装器会等待回环健康接口成功，启动失败或健康检查失败时恢复
