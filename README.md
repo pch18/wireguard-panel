@@ -240,6 +240,7 @@ wget -qO- \
 安装器会：
 
 - 安装 `wireguard-tools`、`iproute2` 和 `iptables`；
+- 在 `/etc/sysctl.conf` 中开启 IPv4 转发并立即生效；
 - 从 GitHub Latest Release 下载 `wireguard-panel_linux_amd64.tar.gz`；
 - 安装二进制到 `/usr/local/bin/wireguard-panel`；
 - 写入 `/etc/init.d/wireguard-panel`，固定以 root 运行；

@@ -11,6 +11,10 @@ trap 'rm -rf "$temporary_directory"' EXIT HUP INT TERM
 # 安装 WireGuard 和 TCP MSS 钳制需要的基础依赖。
 apk add --no-cache wireguard-tools iproute2 iptables
 
+# 开启 IPv4 转发。
+grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf || echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
+sysctl -p
+
 # 下载并安装最新 Release 中的二进制。
 wget -qO "${temporary_directory}/${asset}" \
   "https://github.com/pch18/wireguard-panel/releases/latest/download/${asset}"
