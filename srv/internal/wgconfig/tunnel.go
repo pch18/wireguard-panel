@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 )
 
 const defaultTunnelCommandTimeout = 20 * time.Second
+
+// WireGuard 将全零密钥解释为“未设置”，showconf 因此不会把它输出回来。
+// 校验配置时必须把显式全零和字段缺失视为相同的运行状态。
+const wireGuardZeroKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 // TunnelController applies a native wg-quick configuration and verifies that
 // the kernel WireGuard configuration is the configuration produced from that
@@ -551,15 +556,21 @@ func runtimeFieldsMatch(
 		if isInterface && (key == "listenport" || key == "fwmark") && desiredValue == "0" {
 			continue
 		}
+		if !ok && runtimeValueMayBeOmitted(key, desiredValue, isInterface) {
+			continue
+		}
 		if !ok || !runtimeValueMatches(key, desiredValue, actualValue) {
 			return false
 		}
 	}
-	for key := range actual {
+	for key, actualValue := range actual {
 		if !isInterface && key == "endpoint" {
 			continue
 		}
 		if _, ok := desired[key]; ok {
+			continue
+		}
+		if runtimeValueMayBeOmitted(key, actualValue, isInterface) {
 			continue
 		}
 		// wg-quick assigns these values dynamically when they are omitted from
@@ -576,9 +587,33 @@ func runtimeValueMatches(key string, desired string, actual string) bool {
 	switch key {
 	case "allowedips":
 		return canonicalPrefixes(desired) == canonicalPrefixes(actual)
+	case "fwmark", "listenport", "persistentkeepalive":
+		// wg-quick 接受十进制 FwMark，而 wg showconf 会把同一个值输出为
+		// 十六进制；端口和 Keepalive 也按数值比较，避免文本格式造成误报。
+		desiredNumber, desiredErr := parseRuntimeUint(desired)
+		actualNumber, actualErr := parseRuntimeUint(actual)
+		return desiredErr == nil && actualErr == nil && desiredNumber == actualNumber
 	default:
 		return desired == actual
 	}
+}
+
+func runtimeValueMayBeOmitted(key string, value string, isInterface bool) bool {
+	if isInterface {
+		return key == "privatekey" && value == wireGuardZeroKey
+	}
+	return (key == "presharedkey" && value == wireGuardZeroKey) ||
+		(key == "persistentkeepalive" && value == "0")
+}
+
+func parseRuntimeUint(value string) (uint64, error) {
+	trimmed := strings.TrimSpace(value)
+	base := 10
+	if strings.HasPrefix(strings.ToLower(trimmed), "0x") {
+		trimmed = trimmed[2:]
+		base = 16
+	}
+	return strconv.ParseUint(trimmed, base, 32)
 }
 
 func canonicalPrefixes(value string) string {

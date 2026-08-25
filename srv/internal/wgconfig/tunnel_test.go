@@ -3,6 +3,7 @@ package wgconfig
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"wireguard-panel/internal/model"
@@ -64,6 +65,44 @@ PersistentKeepalive = 25
 	}
 	if !match {
 		t.Fatal("semantically equivalent configurations did not match")
+	}
+}
+
+func TestRuntimeConfigAcceptsShowconfNumericAndOmittedDefaults(t *testing.T) {
+	desired := []byte(`[Interface]
+PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+FwMark = 51820
+
+[Peer]
+PublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+PresharedKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+AllowedIPs = 10.0.0.2/32
+PersistentKeepalive = 0
+`)
+	actual := []byte(`[Interface]
+FwMark = 0xca6c
+
+[Peer]
+PublicKey = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+AllowedIPs = 10.0.0.2/32
+`)
+	match, err := runtimeConfigMatches(desired, actual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !match {
+		t.Fatal("wg showconf normalization was treated as configuration drift")
+	}
+
+	differentFwMark := []byte(strings.Replace(
+		string(actual), "FwMark = 0xca6c", "FwMark = 0xca6d", 1,
+	))
+	match, err = runtimeConfigMatches(desired, differentFwMark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match {
+		t.Fatal("a genuinely different FwMark matched")
 	}
 }
 
