@@ -1494,6 +1494,7 @@ svg {
 .modal-backdrop.is-covered {
   background: transparent;
   backdrop-filter: none;
+  pointer-events: none;
 }
 
 @keyframes backdrop-in {
@@ -2874,6 +2875,60 @@ svg {
 
 .config-text-body > .modal-actions {
   margin: 0 -1.4rem;
+  flex-wrap: wrap;
+}
+
+.modal-backdrop:has(> .is-config-text),
+.modal-backdrop:has(> .is-config-qr) {
+  /* 用遮罩的可用高度约束正文，页面缩放时也不把底部操作挤出视口。 */
+  grid-template-rows: minmax(0, 1fr);
+  animation: none;
+}
+
+.modal.is-config-text,
+.modal.is-config-qr {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  animation: none;
+}
+
+.is-config-text .config-text-body {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.is-config-text .config-textarea {
+  min-height: 8rem;
+  height: min(55vh, 32rem);
+  max-height: 100%;
+}
+
+.is-config-text .button,
+.is-config-text .icon-button,
+.is-config-text .config-textarea,
+.is-config-qr .button,
+.is-config-qr .icon-button {
+  transition: none;
+}
+
+.config-qr-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  padding: 1rem 1.4rem;
+  text-align: center;
+}
+
+.config-qr-image {
+  display: block;
+  width: min(100%, 24rem);
+  height: 100%;
+  max-height: 24rem;
+  aspect-ratio: 1;
+  margin: auto;
+  background: #fff;
 }
 
 .icon-button.is-danger {

@@ -68,6 +68,7 @@ import Modal from "../ui/Modal";
 import { useToast } from "../ui/Toast";
 
 type ConfigPreview = {
+  kind: "interface" | "client";
   title: string;
   description: string;
   filename: string;
@@ -896,6 +897,7 @@ export default function InterfaceEditorPage() {
     try {
       const text = await getInterfaceConfig(interfaceID);
       setConfigPreview({
+        kind: "interface",
         title: `导出 ${config?.filename ?? `${interfaceID}.conf`}`,
         description: "",
         filename: config?.filename ?? `${interfaceID}.conf`,
@@ -918,8 +920,9 @@ export default function InterfaceEditorPage() {
     try {
       const text = await getClientConfigPreview(interfaceID, peer.publicKey);
       setConfigPreview({
+        kind: "client",
         title: `客户端配置：${peer.name}`,
-        description: "必填字段即使缺值也会保留；空的可选字段不会输出。",
+        description: "可直接编辑；二维码、复制和下载均使用当前内容，不修改服务器配置。",
         filename: peer.name,
         text,
       });
@@ -1748,7 +1751,7 @@ export default function InterfaceEditorPage() {
         <ConfigTextModal
           title={configPreview.title}
           description={configPreview.description}
-          mode="preview"
+          mode={configPreview.kind === "client" ? "client" : "preview"}
           value={configPreview.text}
           downloadName={configPreview.filename}
           onClose={() => setConfigPreview(null)}

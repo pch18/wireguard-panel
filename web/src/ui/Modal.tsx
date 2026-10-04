@@ -25,12 +25,32 @@ export default function Modal({
   const titleID = useId();
   const descriptionID = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const coveredFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
   const coveredRef = useRef(covered);
   onCloseRef.current = onClose;
   closeDisabledRef.current = closeDisabled;
   coveredRef.current = covered;
+
+  useEffect(() => {
+    // 被子弹窗覆盖时仍保留表单及草稿，但必须同时禁用键盘和指针交互。
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (covered) {
+      const activeElement = document.activeElement;
+      coveredFocusRef.current =
+        activeElement instanceof HTMLElement && dialog.contains(activeElement)
+          ? activeElement
+          : null;
+      dialog.setAttribute("inert", "");
+    } else {
+      // 子弹窗卸载时父层可能仍处于 inert，须在解除禁用后恢复原触发点。
+      dialog.removeAttribute("inert");
+      coveredFocusRef.current?.focus();
+      coveredFocusRef.current = null;
+    }
+  }, [covered]);
 
   useEffect(() => {
     const previousFocus =
@@ -85,6 +105,7 @@ export default function Modal({
       aria-hidden={covered || undefined}
       onMouseDown={(event) => {
         if (
+          !covered &&
           !closeDisabled &&
           variant === "display" &&
           event.target === event.currentTarget
@@ -97,7 +118,7 @@ export default function Modal({
         ref={dialogRef}
         className={`modal ${className}`.trim()}
         role="dialog"
-        aria-modal="true"
+        aria-modal={covered ? undefined : true}
         aria-labelledby={titleID}
         aria-describedby={description ? descriptionID : undefined}
       >

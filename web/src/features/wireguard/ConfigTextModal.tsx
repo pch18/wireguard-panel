@@ -3,11 +3,12 @@ import Icon from "../../ui/Icon";
 import Modal from "../../ui/Modal";
 import { useToast } from "../../ui/Toast";
 import { downloadWireGuardConfig } from "./configFile";
+import { createConfigQRCode } from "./configQRCode";
 
 type ConfigTextModalProps = {
   title: string;
   description?: string;
-  mode: "preview" | "import";
+  mode: "preview" | "client" | "import";
   value?: string;
   pending?: boolean;
   submitLabel?: string;
@@ -31,12 +32,16 @@ export default function ConfigTextModal({
 }: ConfigTextModalProps) {
   const [text, setText] = useState(value);
   const [copied, setCopied] = useState(false);
+  const [qrCode, setQRCode] = useState<ReturnType<
+    typeof createConfigQRCode
+  > | null>(null);
   const previewRef = useRef<HTMLTextAreaElement>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
     setText(value);
     setCopied(false);
+    setQRCode(null);
   }, [value]);
 
   useEffect(() => {
@@ -91,75 +96,143 @@ export default function ConfigTextModal({
     }
   };
 
+  const generateQRCode = () => {
+    try {
+      // 生成的是点击瞬间的草稿快照，返回编辑后再次点击会重新编码。
+      setQRCode(createConfigQRCode(text));
+    } catch {
+      showToast(
+        text.trim()
+          ? "配置内容过长或无法生成二维码，请精简后重试或下载配置"
+          : "请先填写配置内容",
+        "error",
+      );
+    }
+  };
+
   return (
-    <Modal
-      title={title}
-      description={description}
-      variant={mode === "preview" ? "display" : "input"}
-      closeDisabled={pending}
-      onClose={onClose}
-      className="is-config-text"
-    >
-      {mode === "preview" ? (
-        <div className="config-text-body">
-          <textarea
-            ref={previewRef}
-            className="config-textarea"
-            value={text}
-            readOnly
-            rows={20}
-            spellCheck={false}
-            aria-label={title}
-          />
-          <footer className="modal-actions">
-            <button className="button" type="button" onClick={copyPreview}>
-              <Icon name="copy" />
-              {copied ? "已复制" : "复制配置"}
-            </button>
-            {downloadName && (
+    <>
+      <Modal
+        title={title}
+        description={description}
+        variant={mode === "preview" ? "display" : "input"}
+        covered={qrCode !== null}
+        closeDisabled={pending}
+        onClose={onClose}
+        className="is-config-text"
+      >
+        {mode !== "import" ? (
+          <div className="config-text-body">
+            <textarea
+              ref={previewRef}
+              className="config-textarea"
+              value={text}
+              readOnly={mode === "preview"}
+              onChange={(event) => {
+                setText(event.target.value);
+                setCopied(false);
+              }}
+              rows={20}
+              spellCheck={false}
+              aria-label={title}
+            />
+            <footer className="modal-actions">
+              {mode === "client" && (
+                <button
+                  className="button"
+                  type="button"
+                  onClick={generateQRCode}
+                  disabled={!text.trim()}
+                >
+                  <Icon name="qr-code" />
+                  生成二维码
+                </button>
+              )}
+              <button className="button" type="button" onClick={copyPreview}>
+                <Icon name="copy" />
+                {copied ? "已复制" : "复制配置"}
+              </button>
+              {downloadName && (
+                <button
+                  className="button is-primary"
+                  type="button"
+                  onClick={downloadPreview}
+                >
+                  <Icon name="download" />
+                  下载配置
+                </button>
+              )}
+              <button className="button" type="button" onClick={onClose}>
+                关闭
+              </button>
+            </footer>
+          </div>
+        ) : (
+          <form className="config-text-body" onSubmit={submit}>
+            <textarea
+              className="config-textarea"
+              value={text}
+              required
+              autoFocus
+              rows={20}
+              spellCheck={false}
+              placeholder={placeholder}
+              disabled={pending}
+              aria-label={title}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <footer className="modal-actions">
+              <button
+                className="button"
+                type="button"
+                disabled={pending}
+                onClick={onClose}
+              >
+                取消
+              </button>
               <button
                 className="button is-primary"
-                type="button"
-                onClick={downloadPreview}
+                type="submit"
+                disabled={pending || text.trim() === ""}
               >
-                <Icon name="download" />
-                下载配置
+                {pending && <span className="spinner is-small" />}
+                {pending ? "导入中" : submitLabel}
               </button>
-            )}
-            <button className="button" type="button" onClick={onClose}>
-              关闭
-            </button>
-          </footer>
-        </div>
-      ) : (
-        <form className="config-text-body" onSubmit={submit}>
-          <textarea
-            className="config-textarea"
-            value={text}
-            required
-            autoFocus
-            rows={20}
-            spellCheck={false}
-            placeholder={placeholder}
-            disabled={pending}
-            aria-label={title}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <footer className="modal-actions">
-            <button className="button" type="button" disabled={pending} onClick={onClose}>
-              取消
-            </button>
-            <button
-              className="button is-primary"
-              type="submit"
-              disabled={pending || text.trim() === ""}
+            </footer>
+          </form>
+        )}
+      </Modal>
+      {qrCode && (
+        <Modal
+          title="客户端配置二维码"
+          description="使用 WireGuard 客户端扫码导入当前编辑的配置。"
+          variant="display"
+          onClose={() => setQRCode(null)}
+          className="is-config-qr"
+        >
+          <div className="config-qr-body">
+            <svg
+              className="config-qr-image"
+              viewBox={`0 0 ${qrCode.size} ${qrCode.size}`}
+              role="img"
+              aria-label="客户端配置二维码"
+              shapeRendering="crispEdges"
             >
-              {pending && <span className="spinner is-small" />}
-              {pending ? "导入中" : submitLabel}
+              <rect width={qrCode.size} height={qrCode.size} fill="#fff" />
+              <path d={qrCode.path} fill="#000" />
+            </svg>
+          </div>
+          <footer className="modal-actions">
+            <button
+              className="button"
+              type="button"
+              onClick={() => setQRCode(null)}
+            >
+              返回编辑
             </button>
           </footer>
-        </form>
+        </Modal>
       )}
-    </Modal>
+    </>
   );
 }

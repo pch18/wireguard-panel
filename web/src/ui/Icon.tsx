@@ -21,6 +21,7 @@ export type IconName =
   | "network"
   | "plus"
   | "power"
+  | "qr-code"
   | "refresh"
   | "settings"
   | "shield"
@@ -154,6 +155,14 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="M4 17v-5h5" />
       <path d="M6.1 9a7 7 0 0 1 11.3-2.6L20 9" />
       <path d="m4 15 2.6 2.6A7 7 0 0 0 17.9 15" />
+    </>
+  ),
+  "qr-code": (
+    <>
+      <rect x="3" y="3" width="6" height="6" rx="1" />
+      <rect x="15" y="3" width="6" height="6" rx="1" />
+      <rect x="3" y="15" width="6" height="6" rx="1" />
+      <path d="M15 15h3v3h3v3h-6v-3M21 12v3M12 3v3M3 12h3M12 12v3" />
     </>
   ),
   settings: (
