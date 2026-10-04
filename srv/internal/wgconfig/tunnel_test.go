@@ -1,6 +1,7 @@
 package wgconfig
 
 import (
+	"encoding/base64"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -8,6 +9,49 @@ import (
 
 	"wireguard-panel/internal/model"
 )
+
+func TestRuntimeConfigPrivateKeyClamping(t *testing.T) {
+	canonical, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 穷举 X25519 会规范化的五个位；其他位不变时必须仍是同一身份。
+	for bits := 0; bits < 32; bits++ {
+		variant := append([]byte(nil), raw...)
+		variant[0] = (variant[0] & 248) | byte(bits&7)
+		variant[31] = (variant[31] & 63) | byte((bits>>3)<<6)
+		encoded := base64.StdEncoding.EncodeToString(variant)
+		match, err := runtimeConfigMatches(
+			[]byte("[Interface]\nPrivateKey = "+encoded+"\nListenPort = 60000\n"),
+			[]byte("[Interface]\nListenPort = 60000\nPrivateKey = "+canonical+"\n"),
+		)
+		if err != nil || !match {
+			t.Fatalf("equivalent private key variant %d rejected: %v", bits, err)
+		}
+		if encoded != canonical && runtimeValueMatches("presharedkey", encoded, canonical) {
+			t.Fatal("PresharedKey must not use X25519 normalization")
+		}
+	}
+	other, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{other, "invalid", "", wireGuardZeroKey} {
+		if runtimeValueMatches("privatekey", candidate, canonical) {
+			t.Fatal("different, invalid or unset private key matched")
+		}
+	}
+	// 全零值表示清除身份，不能当作常规 X25519 标量参与等价比较。
+	zeroScalar := make([]byte, 32)
+	zeroScalar[31] = 64
+	if runtimeValueMatches("privatekey", wireGuardZeroKey, base64.StdEncoding.EncodeToString(zeroScalar)) {
+		t.Fatal("unset key matched a clamped zero scalar")
+	}
+}
 
 func TestExecTunnelControllerUsesManagedConfigurationDirectory(t *testing.T) {
 	controller := ExecTunnelController{ConfigDirectory: "/srv/wireguard"}

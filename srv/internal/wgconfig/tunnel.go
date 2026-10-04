@@ -585,6 +585,16 @@ func runtimeFieldsMatch(
 
 func runtimeValueMatches(key string, desired string, actual string) bool {
 	switch key {
+	case "privatekey":
+		// 内核会规范化 X25519 私钥的五个位，showconf 文本可能与导入文件
+		// 不同。复用密钥模块比较对应身份，不改写原文件、不输出密钥；
+		// 全零值特指清除身份，必须在公钥派生前单独处理。
+		if desired == wireGuardZeroKey || actual == wireGuardZeroKey {
+			return desired == actual
+		}
+		desiredPublic, desiredErr := PublicKeyFromPrivate(desired)
+		actualPublic, actualErr := PublicKeyFromPrivate(actual)
+		return desiredErr == nil && actualErr == nil && desiredPublic == actualPublic
 	case "allowedips":
 		return canonicalPrefixes(desired) == canonicalPrefixes(actual)
 	case "fwmark", "listenport", "persistentkeepalive":
