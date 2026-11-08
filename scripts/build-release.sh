@@ -24,11 +24,11 @@ mkdir -p "$output_directory"
 )
 
 chmod 0755 "${temporary_directory}/wireguard-panel"
-cp "${project_directory}/install-alpine.sh" "$temporary_directory/"
-cp "${project_directory}/README.md" "$temporary_directory/"
+cp "${project_directory}/install-alpine.sh" "${project_directory}/install-debian.sh" \
+  "${project_directory}/README.md" "$temporary_directory/"
 
 tar -C "$temporary_directory" -czf "${output_directory}/${asset}" \
-  wireguard-panel install-alpine.sh README.md
+  wireguard-panel install-alpine.sh install-debian.sh README.md
 
 (
   cd "$output_directory"

@@ -1,7 +1,7 @@
 # 发布与服务器安装
 
-项目只提供一个通用的 `install-alpine.sh`。测试和生产服务器都在服务器本机执行该脚本；
-仓库不保存服务器地址、SSH 用户、私钥路径，也不提供远程 SSH 部署脚本。
+测试和生产服务器都在服务器本机执行适用于各自系统的安装脚本。仓库不保存服务器地址、
+SSH 用户、私钥路径，也不提供远程 SSH 部署脚本。
 
 ## 正式发布
 
@@ -24,19 +24,34 @@ wget -qO- \
   | sh
 ```
 
-安装器会使用 GitHub Latest Release。测试和生产服务器执行相同命令，不需要仓库中的
-服务器配置或远程部署工具。
+在以 systemd 启动的 Debian AMD64 服务器上以 root 执行：
+
+```sh
+wget -O install-debian.sh \
+  https://raw.githubusercontent.com/pch18/wireguard-panel/main/install-debian.sh \
+  && sh ./install-debian.sh
+```
+
+两种安装器均使用 GitHub Latest Release。
 
 ## 安装后验收
 
-在目标服务器执行：
+在 Alpine 服务器检查服务和默认端口的健康接口：
 
 ```sh
 rc-service wireguard-panel status
 rc-update show default | grep wireguard-panel
 wget -qO- http://127.0.0.1:5555/api/health
-wg show
 ```
 
-还应从服务器外部访问面板和健康接口，并确认 `/etc/wireguard-panel` 权限为 `0700`、
+在 Debian 服务器检查服务和默认端口的健康接口：
+
+```sh
+systemctl is-active wireguard-panel
+systemctl is-enabled wireguard-panel
+curl -fsS http://127.0.0.1:5555/api/health
+```
+
+在两种系统上都应使用 `wg show` 检查 WireGuard 状态，从服务器外部访问面板和健康接口，
+并确认 `/etc/wireguard-panel` 权限为 `0700`、
 `auth.json` 权限为 `0600`。首次登录后立即修改默认密码。

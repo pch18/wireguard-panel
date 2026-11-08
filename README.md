@@ -232,9 +232,8 @@ SameSite 保护，但不会设置 Secure 属性。
   调用 `wg-quick down/up`。停用 Interface 的写操作保持停用。运行中的 Interface 必须
   先停止才能改名。
 
-当前正式安装方式是 Alpine Linux AMD64 + OpenRC。安装器只写入程序文件和 OpenRC
-服务定义，不创建系统账户或数据库，服务始终以 root 运行。程序首次启动时会自行创建
-受保护的认证文件，用于持久化网页中修改后的密码。
+安装器支持 Alpine Linux AMD64（OpenRC）和 Debian AMD64（systemd）。服务以 root
+运行，程序首次启动时会自行创建受保护的认证文件，用于持久化网页中修改后的密码。
 
 ## Alpine 一键安装
 
@@ -272,10 +271,23 @@ chmod 0600 /etc/conf.d/wireguard-panel
 rc-service wireguard-panel restart
 ```
 
-安装脚本本身不会创建这个可选环境文件。目前只支持 Alpine Linux AMD64。
+## Debian 一键安装
+
+在以 systemd 启动的 Debian AMD64 主机上，从仓库或 Release 安装包取得脚本后，以 root 执行：
+
+```sh
+sh ./install-debian.sh
+```
+
+脚本通过 APT 安装 WireGuard 工具及网络依赖，下载并校验 GitHub Latest Release，安装
+`wireguard-panel.service` 并设置开机启动。IPv4 转发立即生效，并通过
+`/etc/sysctl.d/99-wireguard-panel.conf` 在重启后生效。再次运行脚本可升级面板。
+
+默认访问端口为 `5555`，初始账号密码见上文。需要修改端口时，在
+`/etc/default/wireguard-panel` 中添加 `APP_PORT=8080`，然后执行
+`systemctl restart wireguard-panel`。配置隧道的 `DNS` 字段时，主机需提供 `resolvconf` 命令。
 
 维护者的 Release、服务器本机安装与验收流程见 [DEPLOYMENT.md](DEPLOYMENT.md)。
-测试和生产服务器使用同一个 `install-alpine.sh`，仓库不保存服务器或 SSH 信息。
 
 ## 项目结构
 
@@ -300,6 +312,7 @@ rc-service wireguard-panel restart
 │   ├── web/                    # 前端构建产物
 │   └── main.go
 ├── install-alpine.sh           # Alpine/OpenRC 一键安装
+├── install-debian.sh           # Debian/systemd 一键安装
 ├── DEPLOYMENT.md               # Release、本机安装与验收
 └── scripts/
     └── build-release.sh        # 原生 AMD64 Release 构建
