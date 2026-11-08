@@ -29,9 +29,10 @@ temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 trap 'exit 1' HUP INT TERM
 
-apt-get update
+# 管道安装时，标准输入承载脚本内容。
+apt-get update </dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  ca-certificates curl wireguard-tools iproute2 iptables procps
+  ca-certificates curl wireguard-tools iproute2 iptables procps </dev/null
 
 # 校验完整的 Release 安装包后再替换已安装的程序。
 (

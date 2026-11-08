@@ -27,9 +27,9 @@ wget -qO- \
 在以 systemd 启动的 Debian AMD64 服务器上以 root 执行：
 
 ```sh
-wget -O install-debian.sh \
+wget -qO- \
   https://raw.githubusercontent.com/pch18/wireguard-panel/main/install-debian.sh \
-  && sh ./install-debian.sh
+  | sh
 ```
 
 两种安装器均使用 GitHub Latest Release。

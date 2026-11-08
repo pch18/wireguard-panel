@@ -273,10 +273,12 @@ rc-service wireguard-panel restart
 
 ## Debian 一键安装
 
-在以 systemd 启动的 Debian AMD64 主机上，从仓库或 Release 安装包取得脚本后，以 root 执行：
+在以 systemd 启动的 Debian AMD64 主机上以 root 执行：
 
 ```sh
-sh ./install-debian.sh
+wget -qO- \
+  https://raw.githubusercontent.com/pch18/wireguard-panel/main/install-debian.sh \
+  | sh
 ```
 
 脚本通过 APT 安装 WireGuard 工具及网络依赖，下载并校验 GitHub Latest Release，安装
